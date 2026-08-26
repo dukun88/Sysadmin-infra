@@ -6,23 +6,23 @@
   become: yes
   vars:
     # --- VARIABEL SERVER & WEB ---
-    web_port: 80
-    ssh_custom_port: 2222
-    sysadmin_user: "devopsadmin"
-    sysadmin_ssh_pubkey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ... devopsadmin@controlnode"
+    web_port: 80 
+    ssh_custom_port: 2222 # Ubah port kustom SSH jika tidak mau menggunakan 2222 (misal 2200 atau 54321).
+    sysadmin_user: "devopsadmin" # Ubah sesuai nama username sysadmin yang ingin kamu buat
+    sysadmin_ssh_pubkey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ... devopsadmin@controlnode" # (Wajib diubah) Tempelkan string isi file ~/.ssh/id_rsa.pub milik komputer/control node kamu di sini.
 
     # --- VARIABEL BACKUP MULTI-CLOUD ---
     cloud_provider: "aws" # Pilihan: "aws", "gcs", "azure", "rsync"
-    aws_s3_bucket: "s3://my-company-backup-bucket"
-    gcs_bucket: "gs://my-company-backup-bucket"
-    azure_container_url: "https://myaccount.blob.core.windows.net/my-backup-container?SAS_TOKEN"
-    remote_rsync_dest: "user@192.168.1.100:/data/backups/"
-    backup_source_dir: "/var/www/html"
+    aws_s3_bucket: "s3://my-company-backup-bucket" # Ubah tujuan upload sesuai provider yang kamu pilih.
+    gcs_bucket: "gs://my-company-backup-bucket"  # Ubah tujuan upload sesuai provider yang kamu pilih.
+    azure_container_url: "https://myaccount.blob.core.windows.net/my-backup-container?SAS_TOKEN"  # Ubah tujuan upload sesuai provider yang kamu pilih.
+    remote_rsync_dest: "user@192.168.1.100:/data/backups/"  # Ubah tujuan upload sesuai provider yang kamu pilih.
+    backup_source_dir: "/var/www/html" # Direktori yang ingin kamu kompres & backup
     backup_dest_dir: "/opt/project/backup"
 
     # --- VARIABEL NOTIFIKASI TELEGRAM ---
-    telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
-    telegram_chat_id="YOUR_TELEGRAM_CHAT_ID"
+    telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN" # Masukkan token Bot Telegram kamu dari @BotFather.
+    telegram_chat_id="YOUR_TELEGRAM_CHAT_ID" # Masukkan Chat ID Telegram akun/channel kamu (diperoleh dari bot seperti @userinfobot)
 
   tasks:
     # ==========================================================================
