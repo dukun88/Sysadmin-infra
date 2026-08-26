@@ -1,11 +1,4 @@
 # Lab 1: Server Setup Dasar
-
-**Mata Kuliah:** Administrasi Server & DevOps  
-**Nama Pengumpul:** [Nama Mahasiswa]  
-**NIM:** [NIM Mahasiswa]  
-**Tanggal:** 26 Agustus 2026  
-**Sistem Operasi:** Ubuntu Server 22.04 / 24.04 LTS  
-
 ---
 
 ## 1. Tujuan Praktikum
