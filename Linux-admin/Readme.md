@@ -645,3 +645,139 @@ Praktikum **Lab 5: Automasi dengan Bash + Cron** berhasil dilaksanakan:
 2. Format penamaan penanda waktu (*timestamp*) dinamis berhasil dipraktikkan untuk mencegah duplikasi atau *overwriting* berkas *backup*.
 3. Mekanisme pengoperasian log (*logging*) terbukti mampu mencatat status eksekusi secara rinci untuk keperluan pemantauan (*monitoring*).
 4. Penjadwalan tugas otomatis menggunakan `crontab` berhasil dikonfigurasi untuk mengeksekusi *backup* secara konsisten setiap pukul 02:00 pagi.
+
+# Lab 6: Pengaturan Keamanan Dasar Server & Firewall (Firewall & Security Dasar)
+
+## 1. Tujuan Praktikum
+
+1. Memahami konsep keamanan dasar server Linux menggunakan utilitas **Uncomplicated Firewall (UFW)**.
+2. Mengonfigurasi *firewall rules* untuk membatasi lalu lintas jaringan (hanya mengizinkan port SSH dan HTTP).
+3. Melakukan pengujian aksesabilitas port dari jaringan luar (*port scanning*) untuk memastikan aturan keamanan bekerja dengan baik.
+4. Mengubah port *default* SSH dari port `22` ke port kustom untuk meminimalisir serangan otomatis (*automated bot scanner*).
+5. Mengonfigurasi utilitas **Fail2ban** untuk mencegah serangan *Brute-Force* pada layanan SSH secara otomatis.
+
+---
+
+## 2. Langkah Kerja dan Hasil Praktikum
+
+### 2.1 Konfigurasi UFW (Uncomplicated Firewall)
+
+1. **Memeriksa Status Awal UFW:**
+   ```bash
+   sudo ufw status verbose
+   ```
+
+2. **Pengaturan Aturan Default & Pengizinan Port (SSH & HTTP):**
+   ```bash
+   # Aturan Default: Blokir semua koneksi masuk, izinkan semua koneksi keluar
+   sudo ufw default deny incoming
+   sudo ufw default allow outgoing
+
+   # Mengizinkan Port SSH (22) dan HTTP (80)
+   sudo ufw allow 22/tcp
+   sudo ufw allow 80/tcp
+   ```
+
+3. **Mengaktifkan Firewall:**
+   ```bash
+   sudo ufw enable
+   ```
+
+4. **Verifikasi Aturan UFW:**
+   ```bash
+   sudo ufw status numbered
+   ```
+   *Hasil:* Port `22/tcp` dan `80/tcp` berstatus **`ALLOW IN`** dari lokasi mana pun (*Anywhere*).
+
+---
+
+### 2.2 Pengujian Port dari Komputer Luar
+
+Dilakukan pengujian menggunakan utilitas `nmap` atau `nc` (netcat) dari komputer klien/luar:
+
+```bash
+# Pengujian Port Scanning dari Laptop Klien
+nmap -p 22,80,21,3306 <IP_SERVER>
+```
+
+*Hasil Pengujian:*
+- Port **22** (SSH): `open`
+- Port **80** (HTTP): `open`
+- Port **21** (FTP) & **3306** (MySQL): `filtered` / `closed` (Tersaring oleh UFW).
+
+---
+
+### 2.3 Mengubah Port Default SSH & Update Firewall Rules
+
+Mengubah port *default* SSH dari `22` ke port kustom `2222` untuk meningkatkan *security by obscurity*.
+
+1. **Mengedit Konfigurasi SSH Daemon (`sshd_config`):**
+   ```bash
+   sudo nano /etc/ssh/sshd_config
+   ```
+   *Ubah baris `#Port 22` menjadi:*
+   ```text
+   Port 2222
+   ```
+
+2. **Memperbarui Aturan UFW:**
+   ```bash
+   # Tambahkan port kustom baru
+   sudo ufw allow 2222/tcp
+
+   # Hapus aturan port 22 lama
+   sudo ufw delete allow 22/tcp
+   ```
+
+3. **Restart Service SSH & Verifikasi:**
+   ```bash
+   sudo systemctl restart ssh
+   ```
+   *Uji Koneksi SSH Baru:*
+   ```bash
+   ssh -p 2222 user@<IP_SERVER>
+   ```
+   *Hasil:* Koneksi SSH berhasil terhubung menggunakan port `2222`.
+
+---
+
+### 2.4 Setup Fail2ban untuk Mitigasi Brute-Force SSH
+
+1. **Instalasi Fail2ban:**
+   ```bash
+   sudo apt update && sudo apt install fail2ban -y
+   ```
+
+2. **Konfigurasi Jail Fail2ban Kustom (`jail.local`):**
+   ```bash
+   sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+   sudo nano /etc/fail2ban/jail.local
+   ```
+
+   *Tambahkan/Edit blok konfigurasi `[sshd]` berikut:*
+   ```ini
+   [sshd]
+   enabled = true
+   port = 2222
+   filter = sshd
+   logpath = /var/log/auth.log
+   maxretry = 3
+   findtime = 10m
+   bantime = 1h
+   ```
+
+3. **Restart & Cek Status Fail2ban:**
+   ```bash
+   sudo systemctl restart fail2ban
+   sudo fail2ban-client status sshd
+   ```
+   *Hasil:* Service Fail2ban aktif memantau port `2222` dengan batas percobaan gagal sebanyak 3 kali (*maxretry = 3*).
+
+---
+
+## 3. Kesimpulan
+
+Praktikum **Lab 6: Firewall & Security Dasar** berhasil dilaksanakan:
+1. Konfigurasi **UFW** terbukti efektif dalam membatasi akses port server hanya untuk layanan yang diizinkan (SSH & HTTP).
+2. Pengubahan port *default* SSH ke port kustom (`2222`) berhasil diimplementasikan dan disesuaikan pada aturan *firewall*.
+3. Utilitas **Fail2ban** sukses dikonfigurasi untuk mendeteksi serta memblokir alamat IP penyerang yang melakukan percobaan login (*brute-force*) secara otomatis.
