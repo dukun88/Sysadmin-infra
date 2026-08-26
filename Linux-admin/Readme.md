@@ -250,3 +250,135 @@ Praktikum **Lab 2: Permission & File Management** telah selesai dilaksanakan den
 2. Pengisian dan isolasi grup `devteam` pada direktori `/opt/project/data` berhasil dikonfigurasi menggunakan `chown` dan `chmod`.
 3. Pemahaman perbedaan antara Notasi Numerik (oktal `4-2-1`) dan Notasi Simbolik (`u/g/o/a`) telah diuji dan dibuktikan melalui latihan berulang.
 4. Skenario unik pengkonfigurasian file (`450` atau `u=r,g=rx,o=`) terverifikasi sukses dengan keluaran atribut `-r--r-x---`.
+
+# Lab 3: Instalasi & Pengelolaan Layanan Sistem (Service Management with Systemd)
+
+## 1. Tujuan Praktikum
+
+1. Memahami konsep pengelolaan *service/daemon* pada Linux menggunakan utiilitas init system modern (**Systemd** / `systemctl`).
+2. Melakukan instalasi, pengaktifan, dan konfigurasi auto-start layanan web server (Nginx) menggunakan manajer paket `apt`.
+3. Mempelajari metode penghentian paksa (*process termination*) menggunakan perintah `kill` / `pkill` serta melakukan analisis jejak krisis (*debugging/troubleshooting*) memanfaatkan log sistem (**`journalctl`**).
+4. Membuat, mengonfigurasi, dan menguji layanan kustom (*custom systemd service unit*) untuk mengelola skrip buatan sendiri (Bash/Python) agar berjalan secara persisten di latar belakang (*background process*).
+
+---
+
+## 2. Langkah Kerja dan Hasil Praktikum
+
+### 2.1 Instalasi & Konfigurasi Auto-start Nginx Web Server
+
+1. **Memperbarui Repositori dan Menginstal Nginx:**
+   ```bash
+   sudo apt update
+   sudo apt install nginx -y
+   ```
+
+2. **Pengaturan Auto-Start & Memulai Service:**
+   Mengatur agar layanan Nginx menyala otomatis saat server melakukan *booting*:
+   ```bash
+   sudo systemctl enable nginx
+   sudo systemctl start nginx
+   ```
+
+3. **Verifikasi Status Service:**
+   ```bash
+   sudo systemctl status nginx
+   ```
+   *Hasil:* Status Nginx menunjukkan **`active (running)`** dan terkonfigurasi **`enabled`** untuk booting otomatis.
+
+---
+
+### 2.2 Penghentian Paksa Service & Analisis Log (`journalctl`)
+
+1. **Mencari Process ID (PID) Nginx Master Process:**
+   ```bash
+   ps aux | grep nginx
+   # Atau menggunakan pgrep
+   pgrep -f "nginx: master process"
+   ```
+
+2. **Menghentikan Layanan Secara Paksa (*Force Kill*):**
+   Mengeksekusi sinyal `SIGKILL` (`-9`) langsung ke PID proses master Nginx untuk mensimulasikan kegagalan/crash sistem:
+   ```bash
+   sudo kill -9 <PID_NGINX_MASTER>
+   ```
+
+3. **Melakukan Analisis Penyebab Kematian Service Lewat `journalctl`:**
+   Memeriksa log spesifik unit Nginx untuk menganalisis mengapa layanan berhenti secara mendadak:
+   ```bash
+   sudo journalctl -u nginx -e --no-pager
+   ```
+   *Hasil Analisis Log:* Log mencatat bahwa proses utama Nginx dihentikan oleh sinyal eksternal abnormal (`SIGKILL` / `signal 9`). Status `systemctl status nginx` berubah menjadi `failed` atau `inactive`.
+
+---
+
+### 2.3 Pembuatan Custom Systemd Service File
+
+Tujuannya adalah membuat skrip kustom yang akan terus berjalan di latar belakang dan dikelola penuh oleh Systemd.
+
+#### Step A: Membuat Skrip Bash Kustom
+Membuat skrip sederhana di `/usr/local/bin/myservice.sh` yang menulis timestamp ke dalam log setiap 5 detik:
+```bash
+sudo nano /usr/local/bin/myservice.sh
+```
+
+Isi dari skrip `/usr/local/bin/myservice.sh`:
+```bash
+#!/bin/bash
+while true; do
+    echo "Custom Service Lab 3 sedang berjalan pada: $(date)"
+    sleep 5
+done
+```
+
+Atur izin eksekusi (*executable permission*) pada skrip:
+```bash
+sudo chmod +x /usr/local/bin/myservice.sh
+```
+
+#### Step B: Membuat Systemd Unit File
+Membuat file unit service baru bernama `custom-app.service` pada direktori `/etc/systemd/system/`:
+```bash
+sudo nano /etc/systemd/system/custom-app.service
+```
+
+Isi konfigurasi file `custom-app.service`:
+```ini
+[Unit]
+Description=Custom Daemon App Lab 3 DevOps
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/myservice.sh
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### Step C: Reload Systemd, Start, & Verifikasi Service Baru
+1. Reload daemon Systemd agar mengenali file unit baru:
+   ```bash
+   sudo systemctl daemon-reload
+   ```
+2. Mengaktifkan dan menjalankan `custom-app.service`:
+   ```bash
+   sudo systemctl enable --now custom-app.service
+   ```
+3. Memeriksa status dan log output dari service kustom:
+   ```bash
+   sudo systemctl status custom-app.service
+   sudo journalctl -u custom-app.service -f
+   ```
+   *Hasil:* Service kustom berhasil berjalan (*active/running*), melakukan auto-restart jika terhenti, dan menghasilkan output log secara konsisten di `journalctl`.
+
+---
+
+## 3. Kesimpulan
+
+Praktikum **Lab 3: Install & Kelola Service** berhasil dilaksanakan dengan poin penting:
+1. Perintah `systemctl` terbukti efektif untuk mengontrol *lifecycle* layanan sistem (`start`, `stop`, `enable`, `disable`).
+2. Penggunaan sinyal `kill -9` terbukti mematikan proses seketika, dan jejak kejadian tersebut berhasil diidentifikasi melalui fasilitas pengisian log terpusat **`journalctl`**.
+3. Pembuatan *Custom Systemd Unit File* berhasil diimplementasikan, membuktikan bahwa aplikasi/skrip apapun dapat diubah menjadi layanan tingkat sistem dengan kemampuan pemulihan otomatis (*Auto-Restart*).
