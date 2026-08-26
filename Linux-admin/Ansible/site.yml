@@ -11,11 +11,10 @@
     sysadmin_ssh_pubkey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ... devopsadmin@controlnode"
 
     # --- VARIABEL BACKUP MULTI-CLOUD ---
-    cloud_provider: "aws" # Pilihan: "aws", "gcs", "azure", "rsync"
+    cloud_provider: "aws" # Pilihan: "aws", "gcs", "azure"
     aws_s3_bucket: "s3://my-company-backup-bucket"
     gcs_bucket: "gs://my-company-backup-bucket"
     azure_container_url: "https://myaccount.blob.core.windows.net/my-backup-container?SAS_TOKEN"
-    remote_rsync_dest: "user@192.168.1.100:/data/backups/"
     backup_source_dir: "/var/www/html"
     backup_dest_dir: "/opt/project/backup"
 
@@ -189,7 +188,6 @@
           AWS_S3_BUCKET="{{ aws_s3_bucket }}"
           GCS_BUCKET="{{ gcs_bucket }}"
           AZURE_CONTAINER_URL="{{ azure_container_url }}"
-          REMOTE_RSYNC_DEST="{{ remote_rsync_dest }}"
 
           mkdir -p "$BACKUP_DIR"
           touch "$LOG_FILE"
@@ -232,10 +230,6 @@
               "azure")
                   azcopy copy "$BACKUP_FILE_PATH" "${AZURE_CONTAINER_URL}" >> "$LOG_FILE" 2>&1 && UPLOAD_SUCCESS=true
                   DEST_INFO="Azure Container"
-                  ;;
-              "rsync")
-                  rsync -avz -e "ssh -o StrictHostKeyChecking=no" "$BACKUP_FILE_PATH" "$REMOTE_RSYNC_DEST" >> "$LOG_FILE" 2>&1 && UPLOAD_SUCCESS=true
-                  DEST_INFO="$REMOTE_RSYNC_DEST"
                   ;;
           esac
 
