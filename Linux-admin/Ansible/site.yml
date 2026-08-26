@@ -1,0 +1,299 @@
+---
+# site.yml - Master Playbook untuk Deployment Lab 1 s/d Lab 6 + Security Monitor & Offsite Backup
+
+- name: Automasi Infrastruktur Server & Security Setup
+  hosts: all
+  become: yes
+  vars:
+    # --- VARIABEL SERVER & WEB ---
+    web_port: 80
+    ssh_custom_port: 2222
+    sysadmin_user: "devopsadmin"
+    sysadmin_ssh_pubkey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ... devopsadmin@controlnode"
+
+    # --- VARIABEL BACKUP MULTI-CLOUD ---
+    cloud_provider: "aws" # Pilihan: "aws", "gcs", "azure", "rsync"
+    aws_s3_bucket: "s3://my-company-backup-bucket"
+    gcs_bucket: "gs://my-company-backup-bucket"
+    azure_container_url: "https://myaccount.blob.core.windows.net/my-backup-container?SAS_TOKEN"
+    remote_rsync_dest: "user@192.168.1.100:/data/backups/"
+    backup_source_dir: "/var/www/html"
+    backup_dest_dir: "/opt/project/backup"
+
+    # --- VARIABEL NOTIFIKASI TELEGRAM ---
+    telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+    telegram_chat_id="YOUR_TELEGRAM_CHAT_ID"
+
+  tasks:
+    # ==========================================================================
+    # LAB 1: USER MANAGEMENT & SSH KEY CONFIGURATION
+    # ==========================================================================
+    - name: "Lab 1: Membuat User Sysadmin Baru"
+      user:
+        name: "{{ sysadmin_user }}"
+        shell: /bin/bash
+        groups: sudo
+        append: yes
+
+    - name: "Lab 1: Mengatur SSH Public Key untuk User Sysadmin"
+      authorized_key:
+        user: "{{ sysadmin_user }}"
+        state: present
+        key: "{{ sysadmin_ssh_pubkey }}"
+
+    - name: "Lab 1: Pengaturan Passwordless Sudo"
+      lineinfile:
+        path: /etc/sudoers.d/{{ sysadmin_user }}
+        line: "{{ sysadmin_user }} ALL=(ALL) NOPASSWD:ALL"
+        state: present
+        create: yes
+        mode: '0440'
+
+    # ==========================================================================
+    # LAB 2 & LAB 3: WEB SERVER SETUP (NGINX + PHP-FPM / PYTHON APP)
+    # ==========================================================================
+    - name: "Lab 2/3: Install Package Nginx, PHP, & Dependensi"
+      apt:
+        name:
+          - nginx
+          - php-fpm
+          - php-mysql
+          - python3
+          - python3-pip
+          - curl
+          - git
+          - rsync
+        state: present
+        update_cache: yes
+
+    - name: "Lab 2/3: Membuat Root Directory Web Server"
+      file:
+        path: /var/www/html
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: "Lab 2/3: Deploy Sample Landing Page (index.php)"
+      copy:
+        dest: /var/www/html/index.php
+        content: |
+          <?php
+          echo "<h1>Automated Infrastructure via Ansible</h1>";
+          echo "<p>Server Status: Active & Operational</p>";
+          echo "<p>Host: " . gethostname() . "</p>";
+          ?>
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: "Lab 2/3: Mengaktifkan & Memulai Nginx Service"
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    # ==========================================================================
+    # LAB 4: MONITORING SYSTEM (SECURITY_MONITOR.PY)
+    # ==========================================================================
+    - name: "Lab 4: Deploy Script security_monitor.py"
+      copy:
+        dest: /usr/local/bin/security_monitor.py
+        mode: '0755'
+        content: |
+          #!/usr/bin/env python3
+          import psutil
+          import os
+          import requests
+          import socket
+
+          TELEGRAM_BOT_TOKEN = "{{ telegram_bot_token }}"
+          TELEGRAM_CHAT_ID = "{{ telegram_chat_id }}"
+          HOSTNAME = socket.gethostname()
+
+          def get_system_stats():
+              cpu_usage = psutil.cpu_percent(interval=1)
+              ram_usage = psutil.virtual_memory().percent
+              disk_usage = psutil.disk_usage('/').percent
+              return cpu_usage, ram_usage, disk_usage
+
+          def send_telegram_alert(message):
+              if TELEGRAM_BOT_TOKEN != "YOUR_TELEGRAM_BOT_TOKEN":
+                  url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                  payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+                  try:
+                      requests.post(url, json=payload, timeout=5)
+                  except Exception as e:
+                      print(f"Failed to send alert: {e}")
+
+          def main():
+              cpu, ram, disk = get_system_stats()
+              if cpu > 80.0 or ram > 85.0 or disk > 90.0:
+                  alert_msg = f"⚠️ *CRITICAL SYSTEM ALERT!* ⚠️
+
+"
+                  alert_msg += f"🖥️ *Host:* `{HOSTNAME}`
+"
+                  alert_msg += f"🔥 *CPU Usage:* `{cpu}%`
+"
+                  alert_msg += f"🧠 *RAM Usage:* `{ram}%`
+"
+                  alert_msg += f"💾 *Disk Usage:* `{disk}%`"
+                  send_telegram_alert(alert_msg)
+
+          if __name__ == "__main__":
+              main()
+
+    - name: "Lab 4: Mengatur Cron Job untuk security_monitor.py (Tiap 5 Menit)"
+      cron:
+        name: "Run Security Monitor"
+        minute: "*/5"
+        job: "/usr/bin/python3 /usr/local/bin/security_monitor.py > /dev/null 2>&1"
+
+    # ==========================================================================
+    # LAB 5: OTOMASI BACKUP OFFSITE (OFFSITE_BACKUP.SH)
+    # ==========================================================================
+    - name: "Lab 5: Deploy Script offsite_backup.sh"
+      copy:
+        dest: /usr/local/bin/offsite_backup.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          SOURCE_DIR="{{ backup_source_dir }}"
+          BACKUP_DIR="{{ backup_dest_dir }}"
+          LOG_FILE="/var/log/backup_offsite.log"
+          TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+          BACKUP_FILENAME="backup_data_${TIMESTAMP}.tar.gz"
+          BACKUP_FILE_PATH="${BACKUP_DIR}/${BACKUP_FILENAME}"
+
+          TELEGRAM_BOT_TOKEN="{{ telegram_bot_token }}"
+          TELEGRAM_CHAT_ID="{{ telegram_chat_id }}"
+          CLOUD_PROVIDER="{{ cloud_provider }}"
+
+          AWS_S3_BUCKET="{{ aws_s3_bucket }}"
+          GCS_BUCKET="{{ gcs_bucket }}"
+          AZURE_CONTAINER_URL="{{ azure_container_url }}"
+          REMOTE_RSYNC_DEST="{{ remote_rsync_dest }}"
+
+          mkdir -p "$BACKUP_DIR"
+          touch "$LOG_FILE"
+
+          log_message() {
+              echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$1] $2" | tee -a "$LOG_FILE"
+          }
+
+          send_telegram_alert() {
+              if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ "$TELEGRAM_BOT_TOKEN" != "YOUR_TELEGRAM_BOT_TOKEN" ]; then
+                  curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"                       -d "chat_id=${TELEGRAM_CHAT_ID}"                       -d "text=$1"                       -d "parse_mode=Markdown" > /dev/null 2>&1
+              fi
+          }
+
+          log_message "INFO" "Memulai backup lokal..."
+          START_TIME=$(date +%s)
+
+          if tar -czf "$BACKUP_FILE_PATH" -C "$SOURCE_DIR" . >> "$LOG_FILE" 2>&1; then
+              FILE_SIZE=$(du -h "$BACKUP_FILE_PATH" | cut -f1)
+              log_message "SUCCESS" "Kompresi lokal berhasil: ${FILE_SIZE}"
+          else
+              log_message "ERROR" "Kompresi lokal GAGAL!"
+              send_telegram_alert "🚨 *BACKUP FAILED!* Kompresi lokal pada *$(hostname)* gagal!"
+              exit 1
+          fi
+
+          UPLOAD_SUCCESS=false
+          case "$CLOUD_PROVIDER" in
+              "aws")
+                  aws s3 cp "$BACKUP_FILE_PATH" "${AWS_S3_BUCKET}/${BACKUP_FILENAME}" >> "$LOG_FILE" 2>&1 && UPLOAD_SUCCESS=true
+                  DEST_INFO="${AWS_S3_BUCKET}"
+                  ;;
+              "gcs")
+                  gcloud storage cp "$BACKUP_FILE_PATH" "${GCS_BUCKET}/${BACKUP_FILENAME}" >> "$LOG_FILE" 2>&1 && UPLOAD_SUCCESS=true
+                  DEST_INFO="${GCS_BUCKET}"
+                  ;;
+              "azure")
+                  azcopy copy "$BACKUP_FILE_PATH" "${AZURE_CONTAINER_URL}" >> "$LOG_FILE" 2>&1 && UPLOAD_SUCCESS=true
+                  DEST_INFO="Azure Container"
+                  ;;
+              "rsync")
+                  rsync -avz -e "ssh -o StrictHostKeyChecking=no" "$BACKUP_FILE_PATH" "$REMOTE_RSYNC_DEST" >> "$LOG_FILE" 2>&1 && UPLOAD_SUCCESS=true
+                  DEST_INFO="$REMOTE_RSYNC_DEST"
+                  ;;
+          esac
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          if [ "$UPLOAD_SUCCESS" = true ]; then
+              log_message "SUCCESS" "Unggahan ke ${CLOUD_PROVIDER^^} berhasil!"
+              ALERT_MSG="✅ *BACKUP OFFSITE SUCCESSFUL!*%0A%0A🖥️ *Server:* \`$(hostname)\`%0A☁️ *Provider:* \`${CLOUD_PROVIDER^^}\`%0A📦 *File:* \`${BACKUP_FILENAME}\`%0A📊 *Size:* \`${FILE_SIZE}\`%0A⏱️ *Duration:* \`${DURATION} detik\`"
+              send_telegram_alert "$ALERT_MSG"
+          else
+              log_message "ERROR" "Unggahan GAGAL!"
+              send_telegram_alert "❌ *BACKUP OFFSITE FAILED!* Gagal mengunggah file ke \`${CLOUD_PROVIDER^^}\`."
+              exit 1
+          fi
+
+    - name: "Lab 5: Mengatur Cron Job untuk offsite_backup.sh (Setiap Pukul 02:00 Pagi)"
+      cron:
+        name: "Daily Offsite Backup"
+        hour: "2"
+        minute: "0"
+        job: "/usr/local/bin/offsite_backup.sh > /dev/null 2>&1"
+
+    # ==========================================================================
+    # LAB 6: FIREWALL & SECURITY DASAR (UFW, CUSTOM SSH PORT, FAIL2BAN)
+    # ==========================================================================
+    - name: "Lab 6: Install Fail2ban & UFW"
+      apt:
+        name:
+          - ufw
+          - fail2ban
+        state: present
+
+    - name: "Lab 6: Mengubah Port SSH Default ke Port Kustom ({{ ssh_custom_port }})"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?Port "
+        line: "Port {{ ssh_custom_port }}"
+        state: present
+      notify: Restart SSH
+
+    - name: "Lab 6: Konfigurasi UFW Firewall Rules"
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "{{ web_port }}"
+        - "{{ ssh_custom_port }}"
+
+    - name: "Lab 6: Mengaktifkan UFW Firewall dengan Default Deny Incoming"
+      ufw:
+        state: enabled
+        direction: incoming
+        default: deny
+
+    - name: "Lab 6: Konfigurasi Fail2ban Jail untuk SSH Custom Port"
+      copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [sshd]
+          enabled = true
+          port = {{ ssh_custom_port }}
+          filter = sshd
+          logpath = /var/log/auth.log
+          maxretry = 3
+          findtime = 10m
+          bantime = 1h
+      notify: Restart Fail2ban
+
+  handlers:
+    - name: Restart SSH
+      service:
+        name: ssh
+        state: restarted
+
+    - name: Restart Fail2ban
+      service:
+        name: fail2ban
+        state: restarted
