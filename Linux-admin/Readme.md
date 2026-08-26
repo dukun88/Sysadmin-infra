@@ -382,3 +382,147 @@ Praktikum **Lab 3: Install & Kelola Service** berhasil dilaksanakan dengan poin 
 1. Perintah `systemctl` terbukti efektif untuk mengontrol *lifecycle* layanan sistem (`start`, `stop`, `enable`, `disable`).
 2. Penggunaan sinyal `kill -9` terbukti mematikan proses seketika, dan jejak kejadian tersebut berhasil diidentifikasi melalui fasilitas pengisian log terpusat **`journalctl`**.
 3. Pembuatan *Custom Systemd Unit File* berhasil diimplementasikan, membuktikan bahwa aplikasi/skrip apapun dapat diubah menjadi layanan tingkat sistem dengan kemampuan pemulihan otomatis (*Auto-Restart*).
+
+# Lab 4: Pengelolaan Media Penyimpanan & LVM (Storage & Logical Volume Management)
+
+## 1. Tujuan Praktikum
+
+1. Memahami konsep manajemen media penyimpanan (*storage management*) pada Linux OS.
+2. Melakukan instalasi, partisi, format *filesystem*, dan pengaitan (*mount*) disk virtual baru secara manual.
+3. Menguasai arsitektur **Logical Volume Management (LVM)** mencakup pembuatan *Physical Volume (PV)*, *Volume Group (VG)*, dan *Logical Volume (LV)*.
+4. Melakukan ekspansi/perluasan kapasitas *Logical Volume* secara dinamis (*online resize*) tanpa memerlukan penghentian sistem (*reboot*).
+5. Memahami dan mengonfigurasi pengaitan otomatis *storage* saat proses *booting* melalui berkas `/etc/fstab` menggunakan **UUID**.
+
+---
+
+## 2. Langkah Kerja dan Hasil Praktikum
+
+### 2.1 Menambahkan & Identifikasi Virtual Disk Baru
+1. Menambahkan 2 harddisk virtual baru pada setting VM (VirtualBox/VMware):
+   - Disk 1: `/dev/sdb` (misal 10 GB)
+   - Disk 2: `/dev/sdc` (misal 10 GB)
+2. Memeriksa identifikasi disk yang terdeteksi di server:
+   ```bash
+   lsblk
+   ```
+   *Hasil:* Disk `/dev/sdb` dan `/dev/sdc` terdeteksi di dalam hirarki blok sistem.
+
+---
+
+### 2.2 Partisi, Format (EXT4/XFS), dan Manual Mount
+1. **Membuat Partisi Baru pada Disk `/dev/sdb`:**
+   ```bash
+   sudo fdisk /dev/sdb
+   ```
+   *(Mengetik `n` untuk partisi baru, memilih tipe utama `p`, menekan `Enter` untuk opsi default, lalu `w` untuk menyimpan perubahan).*
+
+2. **Memformat Partisi dengan Filesystem EXT4:**
+   ```bash
+   sudo mkfs.ext4 /dev/sdb1
+   ```
+
+3. **Membuat Mount Point & Pengaitan Manual:**
+   ```bash
+   sudo mkdir -p /mnt/data_manual
+   sudo mount /dev/sdb1 /mnt/data_manual
+   ```
+4. **Verifikasi Mount:**
+   ```bash
+   df -h /mnt/data_manual
+   ```
+   *Hasil:* Partisi `/dev/sdb1` berhasil terkait (*mounted*) pada direktori `/mnt/data_manual`.
+
+---
+
+### 2.3 Konfigurasi LVM (Physical Volume, Volume Group, Logical Volume)
+
+LVM digunakan agar ruang penyimpanan dapat digabungkan dan diperluas secara fleksibel.
+
+#### Step A: Inisialisasi Physical Volume (PV)
+Mengubah disk mentah `/dev/sdc` menjadi Physical Volume LVM:
+```bash
+sudo pvcreate /dev/sdc
+```
+
+#### Step B: Pembuatan Volume Group (VG)
+Membuat Volume Group baru bernama `vg_app` yang menggunakan alokasi dari `/dev/sdc`:
+```bash
+sudo vgcreate vg_app /dev/sdc
+```
+
+#### Step C: Pembuatan Logical Volume (LV) & Format
+1. Membuat Logical Volume bernama `lv_storage` sebesar 5 GB di dalam `vg_app`:
+   ```bash
+   sudo lvcreate -L 5G -n lv_storage vg_app
+   ```
+2. Memformat `lv_storage` menggunakan *filesystem* EXT4:
+   ```bash
+   sudo mkfs.ext4 /dev/vg_app/lv_storage
+   ```
+3. Melakukan mount ke titik direktori tujuan:
+   ```bash
+   sudo mkdir -p /mnt/app_data
+   sudo mount /dev/vg_app/lv_storage /mnt/app_data
+   ```
+
+---
+
+### 2.4 Ekspansi Logical Volume Tanpa Reboot (*Online Resize*)
+
+Salah satu keunggulan LVM adalah kemampuan memperluas kapasitas disk yang sedang digunakan tanpa *downtime*.
+
+1. **Memperluas Ukuran Logical Volume:**
+   Menambahkan kapasitas `lv_storage` sebesar 3 GB tambahan dari sisa alokasi `vg_app`:
+   ```bash
+   sudo lvextend -L +3G /dev/vg_app/lv_storage
+   ```
+2. **Memperluas Filesystem (*Resize On-the-Fly*):**
+   ```bash
+   sudo resize2fs /dev/vg_app/lv_storage
+   ```
+3. **Verifikasi Perubahan Ukuran:**
+   ```bash
+   df -h /mnt/app_data
+   ```
+   *Hasil:* Ukuran direktori `/mnt/app_data` meningkat dari 5 GB menjadi 8 GB tanpa melakukan proses *restart/reboot* server.
+
+---
+
+### 2.5 Konfigurasi Persistent Mount (`/etc/fstab`)
+
+Agar partisi dan LVM tetap terkait secara otomatis saat server di-booting ulang, dilakukan pendaftaran pada `/etc/fstab`.
+
+1. **Mengambil Universal Unique Identifier (UUID) Disk:**
+   ```bash
+   sudo blkid
+   ```
+   *Catat UUID dari `/dev/sdb1` dan `/dev/vg_app/lv_storage`.*
+
+2. **Menambahkan Konfigurasi ke `/etc/fstab`:**
+   ```bash
+   sudo nano /etc/fstab
+   ```
+   Tambahkan baris berikut di paling bawah file:
+   ```text
+   UUID=<UUID_SDB1>          /mnt/data_manual  ext4  defaults  0  2
+   UUID=<UUID_LV_STORAGE>   /mnt/app_data     ext4  defaults  0  2
+   ```
+
+3. **Menguji Konfigurasi `/etc/fstab` (Penting):**
+   Memastikan tidak ada kesalahan sintaks yang dapat menyebabkan kegagalan booting (*boot loop*):
+   ```bash
+   sudo umount /mnt/data_manual /mnt/app_data
+   sudo mount -a
+   df -h
+   ```
+   *Hasil:* Seluruh mount point berhasil terpasang kembali dengan sempurna melalui perintah `mount -a`.
+
+---
+
+## 3. Kesimpulan
+
+Praktikum **Lab 4: Storage & LVM** berhasil diselesaikan dengan hasil:
+1. Pemahaman mendalam mengenai siklus pengelolaan disk (Partisi -> Format -> Mount).
+2. Arsitektur LVM (PV -> VG -> LV) terbukti sangat fleksibel untuk kebutuhan sistem skala besar (*enterprise*).
+3. Fitur *online expansion* (`lvextend` & `resize2fs`) sukses menambah alokasi ruang simpan tanpa mengganggu kestabilan sistem atau melakukan reboot.
+4. Penggunaan UUID pada `/etc/fstab` berhasil menjamin konsistensi pengaitan media penyimpanan saat proses *booting*.
