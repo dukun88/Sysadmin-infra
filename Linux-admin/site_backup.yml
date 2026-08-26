@@ -1,0 +1,192 @@
+---
+# site_backup.yml - Ansible Playbook Khusus Setup Dedicated Backup Server & Automated Remote Backup Client
+
+# ==============================================================================
+# PLAY 1: SETUP DEDICATED BACKUP SERVER (TARGET BACKUP / REPOSITORY)
+# ==============================================================================
+- name: Setup Server Dedicated Backup & NFS Server Repository
+  hosts: backup_server
+  become: yes
+  vars:
+    backup_user: "devopsadmin"
+    nfs_export_dir: "/srv/nfs/backups"
+    remote_backup_store: "/srv/nfs/backups/client_data"
+    client_ip: "192.168.1.51" # IP VM Utama / Client
+
+  tasks:
+    - name: "Backup Server: Install NFS Server & Rsync"
+      apt:
+        name: [nfs-kernel-server, rsync, rclone, tar]
+        state: present
+        update_cache: yes
+
+    - name: "Backup Server: Buat Direktori Tempat Penyimpanan Backup"
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ backup_user }}"
+        group: "{{ backup_user }}"
+        mode: '0775'
+      loop:
+        - "{{ nfs_export_dir }}"
+        - "{{ remote_backup_store }}"
+
+    - name: "Backup Server: Konfigurasi Export NFS Share ke Client"
+      lineinfile:
+        path: /etc/exports
+        line: "{{ nfs_export_dir }} {{ client_ip }}(rw,sync,no_subtree_check,no_root_squash)"
+        state: present
+      notify: Reload NFS Exports
+
+    - name: "Backup Server: Allow Port NFS & SSH pada Firewall UFW"
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: ["2049", "22", "2222"]
+
+    - name: "Backup Server: Pastikan Service NFS Berjalan"
+      service:
+        name: nfs-kernel-server
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Reload NFS Exports
+      command: exportfs -ra
+
+
+# ==============================================================================
+# PLAY 2: SETUP CLIENT / PRODUCTION SERVER & AUTOMATED BACKUP ENGINE
+# ==============================================================================
+- name: Setup Client/Production Server (SSH Keygen, NFS Client, Remote Backup Script)
+  hosts: backup_client
+  become: yes
+  vars:
+    backup_user: "devopsadmin"
+    backup_server_ip: "192.168.1.50" # IP Backup Server
+    backup_server_ssh_port: 2222
+    nfs_mount_dir: "/mnt/backup_nfs"
+    nfs_remote_export: "/srv/nfs/backups"
+    local_source_dir: "/var/www/html"
+    local_backup_tmp: "/opt/backup_tmp"
+    cloud_provider: "aws" # Opsi: aws, gcs, azure, remote_rsync
+    aws_s3_bucket: "s3://my-company-backup-bucket"
+    telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+    telegram_chat_id: "YOUR_TELEGRAM_CHAT_ID"
+
+  tasks:
+    - name: "Client: Install NFS Client & Tools Backup (rsync, rclone, curl)"
+      apt:
+        name: [nfs-common, rsync, rclone, curl, tar]
+        state: present
+
+    # --- SSH PASSWORDLESS CONFIGURATION ---
+    - name: "Client: Generate SSH Keypair untuk User {{ backup_user }}"
+      user:
+        name: "{{ backup_user }}"
+        generate_ssh_key: yes
+        ssh_key_bits: 2048
+        ssh_key_file: .ssh/id_rsa
+
+    - name: "Client: Ambil Public Key SSH Client"
+      slurp:
+        src: "/home/{{ backup_user }}/.ssh/id_rsa.pub"
+      register: client_ssh_pubkey
+
+    - name: "Client: Pasang Public Key Client ke Backup Server (Passwordless SSH)"
+      delegate_to: "{{ groups['backup_server'][0] }}"
+      authorized_key:
+        user: "{{ backup_user }}"
+        state: present
+        key: "{{ client_ssh_pubkey['content'] | b64decode }}"
+
+    # --- NFS AUTO-MOUNT CONFIGURATION ---
+    - name: "Client: Buat Direktori Mount Point NFS"
+      file:
+        path: "{{ nfs_mount_dir }}"
+        state: directory
+        owner: "{{ backup_user }}"
+        group: "{{ backup_user }}"
+
+    - name: "Client: Auto-Mount Remote NFS Storage ke Local Mount Point"
+      ansible.posix.mount:
+        path: "{{ nfs_mount_dir }}"
+        src: "{{ backup_server_ip }}:{{ nfs_remote_export }}"
+        fstype: nfs
+        opts: defaults
+        state: mounted
+
+    # --- AUTOMATED BACKUP & SYNC ENGINE SCRIPT ---
+    - name: "Client: Buat Direktori Temporary Backup"
+      file:
+        path: "{{ local_backup_tmp }}"
+        state: directory
+        owner: "{{ backup_user }}"
+        group: "{{ backup_user }}"
+
+    - name: "Client: Deploy Skrip Remote Backup & Sync (/usr/local/bin/remote_backup_sync.sh)"
+      copy:
+        dest: /usr/local/bin/remote_backup_sync.sh
+        owner: "{{ backup_user }}"
+        group: "{{ backup_user }}"
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # ==============================================================================
+          # AUTOMATED REMOTE BACKUP ENGINE (SCP / RSYNC / NFS SHARE / CLOUD SYNC)
+          # ==============================================================================
+
+          BACKUP_SERVER_IP="{{ backup_server_ip }}"
+          BACKUP_PORT="{{ backup_server_ssh_port }}"
+          BACKUP_USER="{{ backup_user }}"
+          SOURCE_DIR="{{ local_source_dir }}"
+          LOCAL_TMP="{{ local_backup_tmp }}"
+          NFS_MOUNT="{{ nfs_mount_dir }}"
+          TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+          ARCHIVE_NAME="backup_${TIMESTAMP}.tar.gz"
+
+          BOT_TOKEN="{{ telegram_bot_token }}"
+          CHAT_ID="{{ telegram_chat_id }}"
+
+          send_notif() {
+              local msg="$1"
+              if [ "$BOT_TOKEN" != "YOUR_TELEGRAM_BOT_TOKEN" ]; then
+                  curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage"                       -d "chat_id=${CHAT_ID}" -d "text=${msg}" -d "parse_mode=Markdown" > /dev/null
+              fi
+          }
+
+          echo "[1/4] Membuat Kompresi Archive Lokal..."
+          tar -czf "${LOCAL_TMP}/${ARCHIVE_NAME}" -C "$SOURCE_DIR" .
+
+          if [ $? -ne 0 ]; then
+              send_notif "❌ *BACKUP GAGAL:* Gagal kompresi archive pada $(hostname)"
+              exit 1
+          fi
+
+          echo "[2/4] Transfer Berkas via RSYNC/SCP (Passwordless SSH) ke Backup Server..."
+          rsync -avz -e "ssh -p ${BACKUP_PORT} -o StrictHostKeyChecking=no"               "${LOCAL_TMP}/${ARCHIVE_NAME}"               "${BACKUP_USER}@${BACKUP_SERVER_IP}:/srv/nfs/backups/client_data/"
+
+          RSYNC_STATUS=$?
+
+          echo "[3/4] Salin Berkas ke NFS Shared Directory..."
+          cp "${LOCAL_TMP}/${ARCHIVE_NAME}" "${NFS_MOUNT}/client_data/"
+          NFS_STATUS=$?
+
+          echo "[4/4] Cleanup File Temporer Lokal..."
+          rm -f "${LOCAL_TMP}/${ARCHIVE_NAME}"
+
+          if [ $RSYNC_STATUS -eq 0 ] && [ $NFS_STATUS -eq 0 ]; then
+              echo "✅ Backup Remote & NFS Sync Berhasil Ditransfer!"
+              send_notif "✅ *BACKUP SUKSES:* Berkas `${ARCHIVE_NAME}` berhasil tersimpan di Backup Server & NFS Storage."
+          else
+              echo "❌ Gagal Transfer Backup Remote!"
+              send_notif "⚠️ *BACKUP WARNING:* Terjadi kendala saat transfer backup ke Server Remote."
+          fi
+
+    - name: "Client: Pasang Cronjob Backup Otomatis (Setiap Jam 02:00 Pagi)"
+      cron:
+        name: "Automated Remote Backup and NFS Sync"
+        hour: "2"
+        minute: "0"
+        job: "/usr/local/bin/remote_backup_sync.sh > /var/log/remote_backup.log 2>&1"
