@@ -781,3 +781,129 @@ Praktikum **Lab 6: Firewall & Security Dasar** berhasil dilaksanakan:
 1. Konfigurasi **UFW** terbukti efektif dalam membatasi akses port server hanya untuk layanan yang diizinkan (SSH & HTTP).
 2. Pengubahan port *default* SSH ke port kustom (`2222`) berhasil diimplementasikan dan disesuaikan pada aturan *firewall*.
 3. Utilitas **Fail2ban** sukses dikonfigurasi untuk mendeteksi serta memblokir alamat IP penyerang yang melakukan percobaan login (*brute-force*) secara otomatis.
+
+# Lab 7: Simulasi Troubleshooting & Pemulihan Server (Troubleshooting Simulasi)
+
+## 1. Tujuan Praktikum
+
+1. Melatih kemampuan diagnosa krisis (*system troubleshooting*) pada skenario kegagalan server nyata (*real-world failure scenarios*).
+2. Mempelajari pemulihan layanan web (*Nginx*) yang terhenti melalui analisis log sistem (`journalctl` & log aplikasi).
+3. Melakukan identifikasi dan pembersihan lonjakan penggunaan ruang penyimpanan (*disk full*) menggunakan utilitas `df`, `du`, dan `find`.
+4. Mendiagnosa dan memulihkan kegagalan akses akibat kesalahan konfigurasi hak akses berkas (*permission & ownership error*).
+
+---
+
+## 2. Langkah Kerja, Investigasi & Pemulihan
+
+### 2.1 Skenario 1: Web Server Crash / Service Down
+
+#### A. Simulasi Kerusakan (Sengaja Dimatikan)
+```bash
+sudo systemctl stop nginx
+```
+
+#### B. Gejala & Investigasi
+- **Gejala:** Website tidak dapat diakses (muncul *Connection Refused* atau *ERR_CONNECTION_REFUSED* di browser).
+- **Langkah Diagnosa:**
+  1. Cek status service web server:
+     ```bash
+     sudo systemctl status nginx
+     ```
+     *Temuan:* Status Nginx menunjukkan **`inactive (dead)`**.
+  2. Cek log error sistem via `journalctl` dan log error Nginx:
+     ```bash
+     sudo journalctl -u nginx -n 20 --no-pager
+     sudo tail -n 20 /var/log/nginx/error.log
+     ```
+     *Hasil Analisis:* Ditemukan catatan bahwa service dihentikan secara sengaja/abnormal tanpa adanya proses pengikatan (*binding*) pada port HTTP 80.
+
+#### C. Solusi & Pemulihan
+Nyalakan kembali service Nginx dan pastikan fitur *auto-start* aktif:
+```bash
+sudo systemctl start nginx
+sudo systemctl enable nginx
+```
+*Verifikasi:* Akses ulang via `curl -I http://localhost` atau browser. Response mengembalikan **`HTTP/1.1 200 OK`**.
+
+---
+
+### 2.2 Skenario 2: Disk Space Penuh (Disk Full Incident)
+
+#### A. Simulasi Kerusakan (Membuat File Sampah Raksasa)
+Membuat berkas dummy 5 GB di direktori `/var/log/` untuk memenuhi kapasitas partisinya:
+```bash
+sudo fallocate -l 5G /var/log/big_junk_file.log
+```
+
+#### B. Gejala & Investigasi
+- **Gejala:** Aplikasi gagal menulis data, log error *No space left on device*, dan beberapa service crash.
+- **Langkah Diagnosa:**
+  1. Cek penggunaan disk per partisi:
+     ```bash
+     df -h
+     ```
+     *Temuan:* Partisi root `/` menunjukkan kapasitas terisi **100%**.
+  2. Cari lokasi folder yang memakan kapasitas terbesar:
+     ```bash
+     sudo du -sh /* 2>/dev/null | sort -hr | head -n 10
+     sudo du -sh /var/* 2>/dev/null | sort -hr | head -n 10
+     ```
+     *Temuan:* Direktori `/var/log` memakan alokasi terbesar.
+  3. Lakukan pencarian berkas besar (> 1 GB) menggunakan perintah `find`:
+     ```bash
+     sudo find /var/log -type f -size +1G -exec ls -lh {} \;
+     ```
+     *Temuan:* Ditemukan berkas abnormal `/var/log/big_junk_file.log` berukuran 5 GB.
+
+#### C. Solusi & Pemulihan
+Hapus berkas sampah yang menyebabkan disk penuh:
+```bash
+sudo rm -f /var/log/big_junk_file.log
+```
+*Verifikasi:* Jalankan kembali `df -h` untuk memastikan persentase penggunaan disk kembali aman (normal).
+
+---
+
+### 2.3 Skenario 3: Error Hak Akses Berkas (Permission / Ownership Misconfiguration)
+
+#### A. Simulasi Kerusakan (Merusak Hak Akses Document Root)
+```bash
+sudo chmod 000 /var/www/html/index.html
+sudo chown root:root /var/www/html/index.html
+```
+
+#### B. Gejala & Investigasi
+- **Gejala:** Pengunjung web menerima error **`403 Forbidden`** saat membuka halaman web.
+- **Langkah Diagnosa:**
+  1. Uji akses via `curl`:
+     ```bash
+     curl -I http://localhost
+     ```
+     *Hasil:* Mengembalikan status header `HTTP/1.1 403 Forbidden`.
+  2. Periksa error log spesifik Nginx:
+     ```bash
+     sudo tail -n 10 /var/log/nginx/error.log
+     ```
+     *Temuan Log:* Ditemukan log error: `[error] ... open() "/var/www/html/index.html" failed (13: Permission denied)`.
+  3. Cek struktur kepemilikan dan permission berkas target:
+     ```bash
+     ls -la /var/www/html/index.html
+     ```
+     *Temuan:* Izin berkas berstatus `----------` (000) sehingga user web server (`www-data`) tidak memiliki hak baca (*read permission*).
+
+#### C. Solusi & Pemulihan
+Kembalikan hak akses berkas web server ke konfigurasi standar (`644` untuk berkas, `www-data` sebagai owner):
+```bash
+sudo chown -R www-data:www-data /var/www/html
+sudo chmod 644 /var/www/html/index.html
+```
+*Verifikasi:* Jalankan `curl -I http://localhost` untuk memastikan halaman mengembalikan status **`200 OK`**.
+
+---
+
+## 3. Kesimpulan
+
+Praktikum **Lab 7: Troubleshooting Simulasi** berhasil diselesaikan dengan beberapa poin penting:
+1. Kemampuan membaca log via `journalctl` dan `/var/log/` merupakan fondasi utama dalam mengidentifikasi penyebab kematian suatu *service*.
+2. Penggunaan kombinasi perintah `df -h`, `du -sh`, dan `find -size` sangat efektif untuk melacak dan memulihkan krisis disk penuh secara cepat.
+3. Kode status HTTP **`403 Forbidden`** dan log `Permission denied` dapat diselesaikan dengan mengoreksi *permission* (chmod) serta kepemilikan user web server (*chown*).
