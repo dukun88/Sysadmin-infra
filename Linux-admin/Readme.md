@@ -526,3 +526,122 @@ Praktikum **Lab 4: Storage & LVM** berhasil diselesaikan dengan hasil:
 2. Arsitektur LVM (PV -> VG -> LV) terbukti sangat fleksibel untuk kebutuhan sistem skala besar (*enterprise*).
 3. Fitur *online expansion* (`lvextend` & `resize2fs`) sukses menambah alokasi ruang simpan tanpa mengganggu kestabilan sistem atau melakukan reboot.
 4. Penggunaan UUID pada `/etc/fstab` berhasil menjamin konsistensi pengaitan media penyimpanan saat proses *booting*.
+
+# Lab 5: Otomasi Tugas Menggunakan Skrip Bash & Cron (Automasi dengan Bash + Cron)
+
+## 1. Tujuan Praktikum
+
+1. Memahami konsep otomatisasi tugas berkala (*scheduled tasks*) pada lingkungan sistem operasi Linux.
+2. Membuat skrip **Bash** kustom untuk melakukan kompresi dan *backup* otomatis pada direktori `/opt/project/data` dengan format penamaan berbasis *timestamp*.
+3. Mengonfigurasi mekanisme pengarsipan (*logging*) untuk mencatat status keberhasilan atau kegagalan eksekusi skrip ke dalam berkas log terpusat.
+4. Mengonfigurasi utilitas **Cron** (`crontab`) untuk menjadwalkan eksekusi skrip secara otomatis setiap jam 02:00 pagi.
+
+---
+
+## 2. Langkah Kerja dan Hasil Praktikum
+
+### 2.1 Pembuatan Skrip Backup Bash (`backup_project.sh`)
+
+Skrip dibuat di lokasi `/usr/local/bin/backup_project.sh`. Skrip ini akan melakukan kompresi berkas dalam bentuk `.tar.gz`, membuat penamaan unik dengan *timestamp*, serta mencatat hasilnya ke `/var/log/backup_project.log`.
+
+1. **Membuat File Skrip:**
+   ```bash
+   sudo nano /usr/local/bin/backup_project.sh
+   ```
+
+2. **Isi Kode Skrip Bash:**
+   ```bash
+   #!/bin/bash
+
+   # Variable Konfigurasi
+   SOURCE_DIR="/opt/project/data"
+   BACKUP_DIR="/opt/project/backup"
+   TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+   BACKUP_FILE="${BACKUP_DIR}/backup_data_${TIMESTAMP}.tar.gz"
+   LOG_FILE="/var/log/backup_project.log"
+
+   # Pastikan folder backup dan log file ada
+   mkdir -p "$BACKUP_DIR"
+   touch "$LOG_FILE"
+
+   # Catat Waktu Mulai
+   echo "[$(date +'%Y-%m-%d %H:%M:%S')] [INFO] Memulai proses backup direktori ${SOURCE_DIR}..." >> "$LOG_FILE"
+
+   # Eksekusi Kompresi tar.gz
+   if tar -czf "$BACKUP_FILE" -C "$SOURCE_DIR" . >> "$LOG_FILE" 2>&1; then
+       echo "[$(date +'%Y-%m-%d %H:%M:%S')] [SUCCESS] Backup berhasil dibuat: ${BACKUP_FILE}" >> "$LOG_FILE"
+   else
+       echo "[$(date +'%Y-%m-%d %H:%M:%S')] [ERROR] Gagal membuat backup!" >> "$LOG_FILE"
+   fi
+   ```
+
+3. **Memberikan Izin Eksekusi (*Executable Permission*):**
+   ```bash
+   sudo chmod +x /usr/local/bin/backup_project.sh
+   ```
+
+---
+
+### 2.2 Pengujian Skrip Secara Manual
+
+Sebelum dimasukkan ke dalam penjadwalan Cron, skrip diuji secara manual untuk memastikan logika *backup* dan pengarsipan *log* berjalan tanpa error.
+
+1. Memanggil skrip secara langsung:
+   ```bash
+   sudo /usr/local/bin/backup_project.sh
+   ```
+
+2. Verifikasi Berkas Hasil Backup:
+   ```bash
+   ls -la /opt/project/backup
+   ```
+   *Hasil:* Terbuat berkas arsip seperti `backup_data_20260826_020000.tar.gz`.
+
+3. Verifikasi Isi Berkas Log:
+   ```bash
+   cat /var/log/backup_project.log
+   ```
+   *Hasil Output Log:*
+   ```text
+   [2026-08-26 14:30:00] [INFO] Memulai proses backup direktori /opt/project/data...
+   [2026-08-26 14:30:01] [SUCCESS] Backup berhasil dibuat: /opt/project/backup/backup_data_20260826_143000.tar.gz
+   ```
+
+---
+
+### 2.3 Penjadwalan Otomatis Menggunakan Cron
+
+Skrip dijadwalkan agar berjalan otomatis setiap jam 02:00 pagi setiap hari.
+
+1. Mengedit tabel Cron untuk akun `root` (karena proses butuh akses ke `/opt/project/data` dan `/var/log`):
+   ```bash
+   sudo crontab -e
+   ```
+
+2. Menambahkan ekspresi Cron berikut pada baris paling bawah:
+   ```cron
+   0 2 * * * /usr/local/bin/backup_project.sh
+   ```
+
+   **Penjelasan Sintaks Cron (`0 2 * * *`):**
+   - `0`  : Menit ke-0.
+   - `2`  : Jam 02 (format 24-jam / 02:00 AM).
+   - `*`  : Setiap hari dalam sebulan.
+   - `*`  : Setiap bulan.
+   - `*`  : Setiap hari dalam seminggu.
+
+3. Verifikasi Penjadwalan Cron:
+   ```bash
+   sudo crontab -l
+   ```
+   *Hasil:* Aturan penjadwalan jam 02:00 pagi terverifikasi terdaftar aktif.
+
+---
+
+## 3. Kesimpulan
+
+Praktikum **Lab 5: Automasi dengan Bash + Cron** berhasil dilaksanakan:
+1. Skrip pemeliharaan berkas berbasis Bash berhasil mengarsip folder `/opt/project/data` menggunakan algoritma kompresi `tar.gz`.
+2. Format penamaan penanda waktu (*timestamp*) dinamis berhasil dipraktikkan untuk mencegah duplikasi atau *overwriting* berkas *backup*.
+3. Mekanisme pengoperasian log (*logging*) terbukti mampu mencatat status eksekusi secara rinci untuk keperluan pemantauan (*monitoring*).
+4. Penjadwalan tugas otomatis menggunakan `crontab` berhasil dikonfigurasi untuk mengeksekusi *backup* secara konsisten setiap pukul 02:00 pagi.
