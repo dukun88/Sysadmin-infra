@@ -1,28 +1,27 @@
 ---
-# site.yml - Master Playbook untuk Deployment Lab 1 s/d Lab 6 + Security Monitor & Offsite Backup
 
 - name: Automasi Infrastruktur Server & Security Setup
   hosts: all
   become: yes
   vars:
     # --- VARIABEL SERVER & WEB ---
-    web_port: 80 
-    ssh_custom_port: 2222 # Ubah port kustom SSH jika tidak mau menggunakan 2222 (misal 2200 atau 54321).
-    sysadmin_user: "devopsadmin" # Ubah sesuai nama username sysadmin yang ingin kamu buat
-    sysadmin_ssh_pubkey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ... devopsadmin@controlnode" # (Wajib diubah) Tempelkan string isi file ~/.ssh/id_rsa.pub milik komputer/control node kamu di sini.
+    web_port: 80
+    ssh_custom_port: 2222
+    sysadmin_user: "devopsadmin"
+    sysadmin_ssh_pubkey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ... devopsadmin@controlnode"
 
     # --- VARIABEL BACKUP MULTI-CLOUD ---
     cloud_provider: "aws" # Pilihan: "aws", "gcs", "azure", "rsync"
-    aws_s3_bucket: "s3://my-company-backup-bucket" # Ubah tujuan upload sesuai provider yang kamu pilih.
-    gcs_bucket: "gs://my-company-backup-bucket"  # Ubah tujuan upload sesuai provider yang kamu pilih.
-    azure_container_url: "https://myaccount.blob.core.windows.net/my-backup-container?SAS_TOKEN"  # Ubah tujuan upload sesuai provider yang kamu pilih.
-    remote_rsync_dest: "user@192.168.1.100:/data/backups/"  # Ubah tujuan upload sesuai provider yang kamu pilih.
-    backup_source_dir: "/var/www/html" # Direktori yang ingin kamu kompres & backup
+    aws_s3_bucket: "s3://my-company-backup-bucket"
+    gcs_bucket: "gs://my-company-backup-bucket"
+    azure_container_url: "https://myaccount.blob.core.windows.net/my-backup-container?SAS_TOKEN"
+    remote_rsync_dest: "user@192.168.1.100:/data/backups/"
+    backup_source_dir: "/var/www/html"
     backup_dest_dir: "/opt/project/backup"
 
     # --- VARIABEL NOTIFIKASI TELEGRAM ---
-    telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN" # Masukkan token Bot Telegram kamu dari @BotFather.
-    telegram_chat_id="YOUR_TELEGRAM_CHAT_ID" # Masukkan Chat ID Telegram akun/channel kamu (diperoleh dari bot seperti @userinfobot)
+    telegram_bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+    telegram_chat_id: "YOUR_TELEGRAM_CHAT_ID"
 
   tasks:
     # ==========================================================================
@@ -94,61 +93,78 @@
         enabled: yes
 
     # ==========================================================================
-    # LAB 4: MONITORING SYSTEM (SECURITY_MONITOR.PY)
+    # LAB 4: MONITORING SYSTEM DAEMON (SECURITY_MONITOR.PY & SYSTEMD SERVICE)
     # ==========================================================================
-    - name: "Lab 4: Deploy Script security_monitor.py"
+    - name: "Lab 4: Deploy Script Daemon security_monitor.py"
       copy:
         dest: /usr/local/bin/security_monitor.py
         mode: '0755'
         content: |
           #!/usr/bin/env python3
-          import psutil
-          import os
+          import time
+          import subprocess
           import requests
-          import socket
 
-          TELEGRAM_BOT_TOKEN = "{{ telegram_bot_token }}"
-          TELEGRAM_CHAT_ID = "{{ telegram_chat_id }}"
-          HOSTNAME = socket.gethostname()
+          BOT_TOKEN = "{{ telegram_bot_token }}"
+          CHAT_ID = "{{ telegram_chat_id }}"
 
-          def get_system_stats():
-              cpu_usage = psutil.cpu_percent(interval=1)
-              ram_usage = psutil.virtual_memory().percent
-              disk_usage = psutil.disk_usage('/').percent
-              return cpu_usage, ram_usage, disk_usage
+          BLACKLIST = [
+              "rm -rf", "mkfs", "dd if=", "chmod -R 777",
+              "shutdown", "reboot", "init 0", "passwd root",
+              "wget", "curl", "visudo"
+          ]
 
           def send_telegram_alert(message):
-              if TELEGRAM_BOT_TOKEN != "YOUR_TELEGRAM_BOT_TOKEN":
-                  url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-                  payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+              if BOT_TOKEN != "YOUR_TELEGRAM_BOT_TOKEN":
+                  url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                  payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
                   try:
                       requests.post(url, json=payload, timeout=5)
                   except Exception as e:
-                      print(f"Failed to send alert: {e}")
+                      print(f"Gagal mengirim alert: {e}")
 
-          def main():
-              cpu, ram, disk = get_system_stats()
-              if cpu > 80.0 or ram > 85.0 or disk > 90.0:
-                  alert_msg = f"⚠️ *CRITICAL SYSTEM ALERT!* ⚠️
+          def monitor_logs():
+              cmd = ["journalctl", "-u", "sudo", "-f", "-n", "0"]
+              process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-"
-                  alert_msg += f"🖥️ *Host:* `{HOSTNAME}`
-"
-                  alert_msg += f"🔥 *CPU Usage:* `{cpu}%`
-"
-                  alert_msg += f"🧠 *RAM Usage:* `{ram}%`
-"
-                  alert_msg += f"💾 *Disk Usage:* `{disk}%`"
-                  send_telegram_alert(alert_msg)
+              print("Security Monitor Daemon Berjalan...")
+
+              for line in process.stdout:
+                  for pattern in BLACKLIST:
+                      if pattern in line:
+                          alert_msg = f"⚠️ *PERINGATAN KEAMANAN SERVER* ⚠️\n\nTerdeteksi perintah terlarang!\n\n`{line.strip()}`"
+                          print(alert_msg)
+                          send_telegram_alert(alert_msg)
+                          break
 
           if __name__ == "__main__":
-              main()
+              monitor_logs()
 
-    - name: "Lab 4: Mengatur Cron Job untuk security_monitor.py (Tiap 5 Menit)"
-      cron:
-        name: "Run Security Monitor"
-        minute: "*/5"
-        job: "/usr/bin/python3 /usr/local/bin/security_monitor.py > /dev/null 2>&1"
+    - name: "Lab 4: Deploy Systemd Service File (security_monitor.service)"
+      copy:
+        dest: /etc/systemd/system/security_monitor.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Security Monitor Daemon Service
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/python3 /usr/local/bin/security_monitor.py
+          Restart=always
+          RestartSec=5
+          User=root
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Reload Systemd & Restart Security Monitor
+
+    - name: "Lab 4: Mengaktifkan & Memulai Service security_monitor"
+      service:
+        name: security_monitor
+        state: started
+        enabled: yes
 
     # ==========================================================================
     # LAB 5: OTOMASI BACKUP OFFSITE (OFFSITE_BACKUP.SH)
@@ -184,7 +200,10 @@
 
           send_telegram_alert() {
               if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ "$TELEGRAM_BOT_TOKEN" != "YOUR_TELEGRAM_BOT_TOKEN" ]; then
-                  curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"                       -d "chat_id=${TELEGRAM_CHAT_ID}"                       -d "text=$1"                       -d "parse_mode=Markdown" > /dev/null 2>&1
+                  curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                      -d "chat_id=${TELEGRAM_CHAT_ID}" \
+                      -d "text=$1" \
+                      -d "parse_mode=Markdown" > /dev/null 2>&1
               fi
           }
 
@@ -288,6 +307,12 @@
       notify: Restart Fail2ban
 
   handlers:
+    - name: Reload Systemd & Restart Security Monitor
+      systemd:
+        daemon_reload: yes
+        name: security_monitor
+        state: restarted
+
     - name: Restart SSH
       service:
         name: ssh
