@@ -667,3 +667,147 @@ Praktikum Lab 5: DHCP Server Sederhana berhasil diselesaikan. Berdasarkan hasil 
 - VM Client yang dikonfigurasi sebagai DHCP client berhasil memperoleh IP, gateway, dan DNS secara otomatis, tanpa perlu konfigurasi manual seperti pada lab-lab sebelumnya.
 - Lease log pada DHCP server berhasil mencatat riwayat alokasi IP kepada client, membuktikan bahwa DHCP server dapat digunakan untuk melacak alokasi IP dalam jaringan.
 - DHCP server dapat diintegrasikan dengan DNS server internal (hasil Lab 4), sehingga client secara otomatis menerima konfigurasi DNS yang konsisten dengan infrastruktur lab.
+
+# Lab 6: Firewall & Port Filtering
+
+## 1. Tujuan Praktikum
+
+- Mengonfigurasi UFW (Uncomplicated Firewall) pada satu VM yang berperan sebagai gateway.
+- Menerapkan kebijakan default deny incoming dan hanya mengizinkan port tertentu (SSH & HTTP).
+- Menguji perbedaan akses antara port yang dibuka dan port yang diblokir dari VM lain.
+- Mengonfigurasi NAT (Masquerade) agar VM di jaringan lokal (LAN) dapat mengakses internet melalui gateway.
+- Memverifikasi traffic NAT menggunakan counter pada iptables.
+
+## 2. Topologi Lab
+
+```
+Internet
+   |
+   | (NAT Adapter, IP otomatis dari VirtualBox)
+   v
+enp0s8 (WAN) -- VM-Gateway -- enp0s3 (LAN): 192.168.10.1/26
+                                    |
+                              VM-Client: 192.168.10.70
+```
+
+## 3. Langkah Kerja dan Hasil Praktikum
+
+### 3.1 Konfigurasi Adapter WAN
+
+Menambahkan network adapter kedua pada VM-Gateway dengan mode NAT (bukan Internal Network/Host-Only), memberikan akses internet langsung ke VM.
+
+```bash
+ip a
+```
+
+**Hasil**: Interface baru (`enp0s8`) terdeteksi dan memperoleh IP secara otomatis dari DHCP internal virtualisasi.
+
+### 3.2 Instalasi UFW dan Kebijakan Default
+
+```bash
+sudo apt update
+sudo apt install ufw -y
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+```
+
+**Hasil**: Kebijakan default diterapkan — seluruh traffic masuk ditolak, seluruh traffic keluar diizinkan.
+
+### 3.3 Mengizinkan Port SSH dan HTTP
+
+```bash
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+```
+
+**Hasil**: Hanya port 22 (SSH) dan 80 (HTTP) yang diizinkan menerima koneksi masuk, port lainnya mengikuti kebijakan default (deny).
+
+### 3.4 Mengaktifkan IP Forwarding
+
+Mengubah kebijakan forward pada UFW:
+
+```bash
+sudo nano /etc/default/ufw
+```
+
+```
+DEFAULT_FORWARD_POLICY="ACCEPT"
+```
+
+Mengaktifkan IP forwarding pada kernel:
+
+```bash
+sudo sysctl -w net.ipv4.ip_forward=1
+```
+
+**Hasil**: VM-Gateway dikonfigurasi untuk meneruskan traffic antar interface, diperlukan agar NAT dapat berfungsi.
+
+### 3.5 Konfigurasi NAT (Masquerade)
+
+```bash
+sudo nano /etc/ufw/before.rules
+```
+
+Menambahkan blok berikut di bagian paling atas file (sebelum baris `*filter`):
+
+```
+# NAT table rules
+*nat
+:POSTROUTING ACCEPT [0:0]
+-A POSTROUTING -s 192.168.10.0/26 -o enp0s8 -j MASQUERADE
+COMMIT
+```
+
+**Hasil**: Rule NAT berhasil ditambahkan, mengarahkan seluruh traffic dari subnet LAN (`192.168.10.0/26`) untuk di-masquerade menggunakan IP interface WAN (`enp0s8`) saat keluar ke internet.
+
+### 3.6 Mengaktifkan UFW dan Verifikasi Status
+
+```bash
+sudo ufw enable
+sudo ufw status verbose
+```
+
+**Hasil**: UFW aktif dengan status menunjukkan port 22/tcp dan 80/tcp berstatus `ALLOW`, sementara port lainnya mengikuti kebijakan default `DENY`.
+
+### 3.7 Pengujian Port dari VM-Client
+
+Menguji port yang diizinkan (SSH):
+
+```bash
+nc -zv 192.168.10.1 22
+```
+
+**Hasil**: Koneksi berhasil (`succeeded`/`open`).
+
+Menguji port yang tidak diizinkan (misal port 23):
+
+```bash
+nc -zv 192.168.10.1 23
+```
+
+**Hasil**: Koneksi gagal (`timeout`/`refused`), membuktikan firewall berhasil memblokir port yang tidak didaftarkan secara eksplisit.
+
+### 3.8 Pengujian NAT dari VM-Client
+
+```bash
+ping 8.8.8.8
+```
+
+**Hasil**: Ping berhasil mendapatkan reply, membuktikan VM-Client — yang tidak memiliki akses internet langsung — berhasil mengakses internet melalui NAT yang dikonfigurasi di VM-Gateway.
+
+### 3.9 Verifikasi Counter NAT
+
+```bash
+sudo iptables -t nat -L POSTROUTING -n -v
+```
+
+**Hasil**: Kolom `pkts` dan `bytes` pada baris `MASQUERADE` menunjukkan peningkatan jumlah paket setelah pengujian ping dari VM-Client, membuktikan traffic benar-benar melewati rule NAT yang dikonfigurasi.
+
+## 4. Kesimpulan
+
+Praktikum Lab 6: Firewall & Port Filtering berhasil diselesaikan. Berdasarkan hasil pengujian:
+
+- UFW berhasil dikonfigurasi dengan kebijakan default deny incoming, dan hanya mengizinkan port SSH (22) dan HTTP (80), sehingga memperkecil attack surface pada VM-Gateway.
+- Pengujian port membuktikan bahwa port yang tidak didaftarkan secara eksplisit (misal port 23) berhasil diblokir, sementara port yang diizinkan tetap dapat diakses.
+- Konfigurasi NAT (Masquerade) berhasil memungkinkan VM di jaringan lokal (LAN) mengakses internet melalui satu titik keluar (Gateway), tanpa VM tersebut memiliki akses internet langsung.
+- IP forwarding dan NAT saling melengkapi: IP forwarding memastikan paket diteruskan antar interface, sementara Masquerade memastikan paket tersebut "menyamar" menggunakan IP WAN yang valid di internet.
