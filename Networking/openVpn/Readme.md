@@ -227,6 +227,23 @@ network:
         - {{ internal_ip }}
 ```
 
+**`templates/private-server-netplan.j2`** — template untuk private server, IP di-parameterize agar bisa dipakai ulang untuk banyak host sekaligus:
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    {{ interface }}:
+      dhcp4: no
+      addresses:
+        - {{ ansible_host }}/24
+      routes:
+        - to: default
+          via: {{ gateway_ip }}
+```
+
+> **Catatan**: `{{ ansible_host }}` diambil otomatis dari nilai `ansible_host` yang didefinisikan tiap host di `inventory.ini`, sehingga satu template ini bisa dipakai untuk `private-server-1`, `private-server-2`, dst tanpa perlu bikin template terpisah per host.
+
 **`setup-vpn-gateway.yml`**:
 
 ```yaml
