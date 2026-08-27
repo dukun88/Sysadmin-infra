@@ -39,7 +39,7 @@ Mengarahkan VM 1 ke dalam rentang alamat Subnet 1 (`192.168.10.0/26`).
 Membuka file konfigurasi Netplan:
 
 ```bash
-sudo nano /etc/netplan/00-installer-config.yaml
+sudo nano /etc/netplan/50-cloud-init.yaml
 ```
 
 Menyesuaikan konfigurasi file seperti berikut:
@@ -73,7 +73,7 @@ Mengarahkan VM 2 ke dalam rentang alamat Subnet 2 (`192.168.10.64/26`).
 Membuka file konfigurasi Netplan pada VM 2:
 
 ```bash
-sudo nano /etc/netplan/00-installer-config.yaml
+sudo nano /etc/netplan/50-cloud-init.yaml
 ```
 
 Menyesuaikan konfigurasi file:
