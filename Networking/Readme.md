@@ -366,3 +366,168 @@ Praktikum Lab 3: Routing Dasar berhasil diselesaikan. Berdasarkan hasil pengujia
 - IP forwarding pada kernel Linux wajib diaktifkan (`net.ipv4.ip_forward=1`) agar VM Router dapat meneruskan paket antar interface, karena secara default kernel Linux akan mengabaikan paket yang bukan ditujukan untuk dirinya sendiri.
 - Static route pada host tujuan diperlukan agar host mengetahui jalur (gateway) menuju subnet lain yang bukan merupakan jaringan lokalnya.
 - Hasil pengujian ping antar subnet yang sebelumnya gagal pada Lab 1 (tanpa router) berhasil dilakukan setelah router, IP forwarding, dan static route dikonfigurasi dengan benar, membuktikan fungsi routing sebagai penghubung logis antar subnet.
+
+# Lab 4: DNS Server Sederhana
+
+## 1. Tujuan Praktikum
+
+- Memahami cara kerja DNS server dari sisi penyedia layanan (server), bukan hanya sebagai pengguna.
+- Menginstal dan mengonfigurasi BIND9 sebagai authoritative DNS server untuk domain lokal.
+- Membuat zone file dan DNS record tipe A untuk domain `lab.local`.
+- Mengarahkan VM client agar menggunakan DNS server lokal untuk resolusi domain.
+- Menambahkan record baru dan memverifikasi propagasi perubahan tanpa restart penuh service.
+
+## 2. Topologi Lab
+
+```
+VM-DNS-Server (BIND9)          VM-Client
+192.168.10.10       <-------   192.168.10.70
+```
+
+## 3. Langkah Kerja dan Hasil Praktikum
+
+### 3.1 Instalasi BIND9
+
+```bash
+sudo apt update
+sudo apt install bind9 bind9utils -y
+```
+
+**Hasil**: BIND9 berhasil terinstal sebagai DNS server.
+
+### 3.2 Konfigurasi Zone Domain Lokal
+
+Mendaftarkan zone `lab.local` pada konfigurasi BIND:
+
+```bash
+sudo nano /etc/bind/named.conf.local
+```
+
+```
+zone "lab.local" {
+    type master;
+    file "/etc/bind/db.lab.local";
+};
+```
+
+### 3.3 Pembuatan Zone File
+
+Membuat file zone dari template bawaan:
+
+```bash
+sudo cp /etc/bind/db.local /etc/bind/db.lab.local
+sudo nano /etc/bind/db.lab.local
+```
+
+Isi zone file:
+
+```
+;
+; BIND data file for lab.local
+;
+$TTL    604800
+@       IN      SOA     lab.local. admin.lab.local. (
+                              3         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+@       IN      NS      server.lab.local.
+server  IN      A       192.168.10.10
+```
+
+**Hasil**: Zone file berisi record `NS` untuk nameserver dan record `A` yang mengarahkan `server.lab.local` ke `192.168.10.10`.
+
+### 3.4 Verifikasi Konfigurasi dan Restart Service
+
+```bash
+sudo named-checkzone lab.local /etc/bind/db.lab.local
+sudo named-checkconf
+sudo systemctl restart bind9
+sudo systemctl status bind9
+```
+
+**Hasil**: Pemeriksaan `named-checkzone` mengembalikan status `OK`, menandakan syntax zone file valid. Service `bind9` berhasil restart dan berjalan dengan status `active (running)`.
+
+### 3.5 Pengujian DNS Server Secara Lokal
+
+```bash
+dig @localhost server.lab.local
+```
+
+**Hasil**: Query berhasil dijawab, dengan `ANSWER SECTION` menampilkan `server.lab.local` mengarah ke `192.168.10.10`, sesuai dengan record yang telah didefinisikan.
+
+### 3.6 Konfigurasi DNS pada VM Client
+
+Mengarahkan VM Client untuk menggunakan DNS server lokal melalui Netplan:
+
+```bash
+sudo nano /etc/netplan/50-cloud-init.yaml
+```
+
+```yaml
+      nameservers:
+        addresses:
+          - 192.168.10.10
+```
+
+```bash
+sudo netplan apply
+```
+
+### 3.7 Pengujian Resolusi dari VM Client
+
+```bash
+dig server.lab.local
+```
+
+**Hasil**: Query dari VM Client berhasil dijawab oleh DNS server `192.168.10.10`, dengan hasil resolusi yang sesuai (`server.lab.local` → `192.168.10.10`), membuktikan VM Client telah menggunakan DNS server lokal, bukan DNS publik.
+
+### 3.8 Penambahan Record Baru dan Verifikasi Propagasi
+
+Menambahkan record `A` baru untuk `client.lab.local`, serta menaikkan nomor Serial pada SOA record:
+
+```bash
+sudo nano /etc/bind/db.lab.local
+```
+
+```
+;
+; BIND data file for lab.local
+;
+$TTL    604800
+@       IN      SOA     lab.local. admin.lab.local. (
+                              4         ; Serial (naik dari 3 ke 4)
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+@       IN      NS      server.lab.local.
+server  IN      A       192.168.10.10
+client  IN      A       192.168.10.70
+```
+
+Menerapkan perubahan tanpa restart penuh:
+
+```bash
+sudo systemctl reload bind9
+```
+
+Menguji record baru dari VM Client:
+
+```bash
+dig client.lab.local
+```
+
+**Hasil**: Record baru `client.lab.local` berhasil di-resolve menjadi `192.168.10.70`, membuktikan bahwa perubahan zone file berhasil diterapkan melalui `reload` tanpa perlu me-restart service BIND9 secara penuh.
+
+## 4. Kesimpulan
+
+Praktikum Lab 4: DNS Server Sederhana berhasil diselesaikan. Berdasarkan hasil pengujian:
+
+- BIND9 berhasil dikonfigurasi sebagai authoritative DNS server untuk domain lokal `lab.local`.
+- Zone file dengan record `SOA`, `NS`, dan `A` berhasil dibuat dan divalidasi menggunakan `named-checkzone` sebelum diterapkan.
+- VM Client berhasil diarahkan untuk menggunakan DNS server lokal, dan berhasil melakukan resolusi domain lokal yang tidak tersedia di DNS publik manapun.
+- Penambahan record baru pada zone file dapat diterapkan cukup dengan `systemctl reload` (bukan `restart`), asalkan nomor Serial pada SOA record dinaikkan agar BIND mengenali adanya perubahan data zone.
