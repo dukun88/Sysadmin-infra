@@ -1,0 +1,11 @@
+network:
+  version: 2
+  ethernets:
+    {{ public_interface }}:
+      dhcp4: no
+      addresses:
+        - {{ public_ip }}
+    {{ internal_interface }}:
+      dhcp4: no
+      addresses:
+        - {{ internal_ip }}
