@@ -531,3 +531,139 @@ Praktikum Lab 4: DNS Server Sederhana berhasil diselesaikan. Berdasarkan hasil p
 - Zone file dengan record `SOA`, `NS`, dan `A` berhasil dibuat dan divalidasi menggunakan `named-checkzone` sebelum diterapkan.
 - VM Client berhasil diarahkan untuk menggunakan DNS server lokal, dan berhasil melakukan resolusi domain lokal yang tidak tersedia di DNS publik manapun.
 - Penambahan record baru pada zone file dapat diterapkan cukup dengan `systemctl reload` (bukan `restart`), asalkan nomor Serial pada SOA record dinaikkan agar BIND mengenali adanya perubahan data zone.
+
+# Lab 5: DHCP Server Sederhana
+
+## 1. Tujuan Praktikum
+
+- Memahami cara kerja DHCP server dalam memberikan alamat IP secara otomatis kepada client.
+- Menginstal dan mengonfigurasi ISC DHCP Server pada satu VM.
+- Mengonfigurasi range IP, subnet, gateway, dan DNS yang akan didistribusikan ke client.
+- Mengubah konfigurasi client dari static IP menjadi DHCP client, dan memverifikasi IP yang diperoleh secara otomatis.
+- Memeriksa lease log untuk melihat riwayat alokasi IP kepada client.
+
+## 2. Topologi Lab
+
+```
+VM-DHCP-Server                VM-Client
+192.168.10.10   <-- DHCP -->  (IP diperoleh otomatis)
+```
+
+## 3. Langkah Kerja dan Hasil Praktikum
+
+### 3.1 Instalasi ISC DHCP Server
+
+```bash
+sudo apt update
+sudo apt install isc-dhcp-server -y
+```
+
+**Hasil**: ISC DHCP Server berhasil terinstal pada VM-DHCP-Server.
+
+### 3.2 Penentuan Interface DHCP
+
+Menentukan interface yang akan digunakan untuk melayani permintaan DHCP:
+
+```bash
+sudo nano /etc/default/isc-dhcp-server
+```
+
+```
+INTERFACESv4="enp0s3"
+```
+
+### 3.3 Konfigurasi Range IP, Subnet, Gateway, dan DNS
+
+```bash
+sudo nano /etc/dhcp/dhcpd.conf
+```
+
+```
+subnet 192.168.10.0 netmask 255.255.255.192 {
+  range 192.168.10.30 192.168.10.40;
+  option routers 192.168.10.1;
+  option subnet-mask 255.255.255.192;
+  option domain-name-servers 192.168.10.10;
+  option domain-name "lab.local";
+  default-lease-time 600;
+  max-lease-time 7200;
+}
+```
+
+Penjelasan konfigurasi:
+
+- `range` — rentang IP yang dapat dipinjamkan kepada client (`192.168.10.30` – `192.168.10.40`).
+- `option routers` — gateway yang diberikan kepada client (`192.168.10.1`).
+- `option domain-name-servers` — DNS server yang diberikan kepada client, memanfaatkan DNS server dari Lab 4 (`192.168.10.10`).
+- `default-lease-time` / `max-lease-time` — durasi peminjaman IP sebelum client harus melakukan renewal.
+
+### 3.4 Restart dan Verifikasi Status Service
+
+```bash
+sudo systemctl restart isc-dhcp-server
+sudo systemctl status isc-dhcp-server
+```
+
+**Hasil**: Service `isc-dhcp-server` berhasil berjalan dengan status `active (running)`, menandakan konfigurasi subnet dan netmask telah sesuai dengan interface DHCP server.
+
+### 3.5 Konfigurasi VM Client sebagai DHCP Client
+
+Mengubah konfigurasi Netplan pada VM Client dari static IP menjadi DHCP:
+
+```bash
+sudo nano /etc/netplan/50-cloud-init.yaml
+```
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    enp0s3:
+      dhcp4: yes
+```
+
+```bash
+sudo netplan apply
+```
+
+### 3.6 Verifikasi IP yang Diperoleh Secara Otomatis
+
+```bash
+ip a
+```
+
+**Hasil**: Interface `enp0s3` pada VM Client berhasil memperoleh IP secara otomatis dari rentang yang telah dikonfigurasi (`192.168.10.30` – `192.168.10.40`), menggantikan static IP yang sebelumnya digunakan.
+
+Memverifikasi gateway dan DNS yang diterima:
+
+```bash
+ip route
+resolvectl status
+```
+
+**Hasil**: Gateway dan DNS server yang diterima VM Client sesuai dengan konfigurasi `option routers` dan `option domain-name-servers` pada `dhcpd.conf`.
+
+### 3.7 Pemeriksaan Lease Log
+
+```bash
+cat /var/lib/dhcp/dhcpd.leases
+```
+
+**Hasil**: File lease menampilkan entri IP yang telah diberikan kepada VM Client, mencakup informasi `starts`, `ends`, `binding state active`, dan `client-hostname`, sesuai dengan IP yang diverifikasi pada langkah sebelumnya.
+
+### 3.8 Live Monitoring Lease (Bonus)
+
+```bash
+sudo journalctl -u isc-dhcp-server -f
+```
+
+**Hasil**: Log DHCP server berhasil menangkap request secara real-time saat VM Client melakukan permintaan ulang IP (`netplan apply`), menampilkan proses DHCP handshake (DISCOVER, OFFER, REQUEST, ACK).
+
+## 4. Kesimpulan
+
+Praktikum Lab 5: DHCP Server Sederhana berhasil diselesaikan. Berdasarkan hasil pengujian:
+
+- ISC DHCP Server berhasil dikonfigurasi untuk mendistribusikan IP secara otomatis dalam rentang yang telah ditentukan, lengkap dengan gateway dan DNS server.
+- VM Client yang dikonfigurasi sebagai DHCP client berhasil memperoleh IP, gateway, dan DNS secara otomatis, tanpa perlu konfigurasi manual seperti pada lab-lab sebelumnya.
+- Lease log pada DHCP server berhasil mencatat riwayat alokasi IP kepada client, membuktikan bahwa DHCP server dapat digunakan untuk melacak alokasi IP dalam jaringan.
+- DHCP server dapat diintegrasikan dengan DNS server internal (hasil Lab 4), sehingga client secara otomatis menerima konfigurasi DNS yang konsisten dengan infrastruktur lab.
