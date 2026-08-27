@@ -230,3 +230,139 @@ Praktikum Lab 2: Konfigurasi Network di Linux berhasil diselesaikan. Berdasarkan
 - Ubuntu Server menggunakan Netplan dan `systemd-networkd` sebagai pengelola network utama, bukan `NetworkManager` yang umum digunakan pada Ubuntu Desktop.
 - Resolusi hostname dapat dilakukan secara manual dan lokal melalui file `/etc/hosts` tanpa memerlukan DNS server.
 - File `/etc/resolv.conf` pada Ubuntu modern dikelola otomatis oleh `systemd-resolved`, sehingga konfigurasi DNS yang benar dan persisten harus dilakukan melalui file Netplan, bukan dengan mengedit `/etc/resolv.conf` secara langsung.
+
+# Lab 3: Routing Dasar
+
+## 1. Tujuan Praktikum
+
+- Memahami konsep dasar routing sebagai penghubung antar subnet yang berbeda.
+- Mengonfigurasi satu VM sebagai router dengan dua network interface (dual-homed).
+- Mengaktifkan IP forwarding pada kernel Linux agar paket dapat diteruskan antar interface.
+- Menambahkan static route pada host agar dapat berkomunikasi melalui router.
+- Memverifikasi routing table dan menguji konektivitas antar subnet melalui router.
+
+## 2. Topologi Lab
+
+```
+VM1 (Subnet 1)  ---  VM-Router (2 NIC)  ---  VM2 (Subnet 2)
+192.168.10.10        enp0s3: 192.168.10.1        192.168.10.70
+                      enp0s8: 192.168.10.65
+```
+
+## 3. Langkah Kerja dan Hasil Praktikum
+
+### 3.1 Persiapan VM Router (Dual Interface)
+
+Menambahkan network adapter kedua pada VM Router melalui pengaturan virtualisasi (VirtualBox/VMware), sehingga VM Router memiliki dua interface yang masing-masing terhubung ke subnet berbeda.
+
+Memverifikasi kedua interface terdeteksi oleh sistem:
+
+```bash
+ip a
+```
+
+**Hasil**: Sistem mendeteksi dua interface, yaitu `enp0s3` dan `enp0s8`, masing-masing akan dihubungkan ke Subnet 1 dan Subnet 2.
+
+### 3.2 Konfigurasi IP pada VM Router
+
+Mengedit file konfigurasi Netplan pada VM Router:
+
+```bash
+sudo nano /etc/netplan/50-cloud-init.yaml
+```
+
+Isi konfigurasi:
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    enp0s3:
+      dhcp4: no
+      addresses:
+        - 192.168.10.1/26
+    enp0s8:
+      dhcp4: no
+      addresses:
+        - 192.168.10.65/26
+```
+
+Menerapkan konfigurasi:
+
+```bash
+sudo netplan apply
+ip a
+```
+
+**Hasil**: Interface `enp0s3` terkonfigurasi sebagai gateway Subnet 1 (`192.168.10.1`) dan `enp0s8` sebagai gateway Subnet 2 (`192.168.10.65`).
+
+### 3.3 Mengaktifkan IP Forwarding
+
+Memeriksa status IP forwarding pada kernel (default: nonaktif):
+
+```bash
+cat /proc/sys/net/ipv4/ip_forward
+```
+
+Mengaktifkan IP forwarding secara langsung:
+
+```bash
+sudo sysctl -w net.ipv4.ip_forward=1
+```
+
+Mengaktifkan IP forwarding secara permanen agar tetap berlaku setelah reboot:
+
+```bash
+sudo nano /etc/sysctl.conf
+```
+
+Menghapus tanda komentar (`#`) pada baris `net.ipv4.ip_forward=1`, kemudian menerapkan perubahan:
+
+```bash
+sudo sysctl -p
+```
+
+**Hasil**: Nilai `ip_forward` berhasil diubah dari `0` menjadi `1`, menandakan kernel VM Router sekarang meneruskan paket antar interface, bukan hanya menerima paket yang ditujukan untuk dirinya sendiri.
+
+### 3.4 Menambahkan Static Route pada VM1 dan VM2
+
+Menambahkan static route pada VM1 agar paket menuju Subnet 2 diarahkan melalui VM Router:
+
+```bash
+sudo ip route add 192.168.10.64/26 via 192.168.10.1
+```
+
+Menambahkan static route pada VM2 agar paket menuju Subnet 1 diarahkan melalui VM Router:
+
+```bash
+sudo ip route add 192.168.10.0/26 via 192.168.10.65
+```
+
+### 3.5 Verifikasi Routing Table
+
+Memeriksa routing table pada VM1 dan VM2:
+
+```bash
+ip route
+```
+
+**Hasil**: Routing table pada masing-masing VM menampilkan entri baru berupa route menuju subnet lawan melalui IP interface VM Router yang bersesuaian (`192.168.10.1` untuk VM1, `192.168.10.65` untuk VM2), selain entri `default` bawaan.
+
+### 3.6 Pengujian Konektivitas Antar Subnet
+
+Melakukan ping dari VM1 menuju VM2 melalui VM Router:
+
+```bash
+ping 192.168.10.70
+```
+
+**Hasil**: Ping berhasil mendapatkan reply. Berbeda dengan hasil pada Lab 1 (tanpa router, komunikasi gagal), pada lab ini komunikasi antar subnet berhasil dilakukan setelah IP forwarding diaktifkan dan static route ditambahkan pada kedua host.
+
+## 4. Kesimpulan
+
+Praktikum Lab 3: Routing Dasar berhasil diselesaikan. Berdasarkan hasil pengujian:
+
+- VM dengan dua network interface dapat difungsikan sebagai router sederhana yang menghubungkan dua subnet berbeda.
+- IP forwarding pada kernel Linux wajib diaktifkan (`net.ipv4.ip_forward=1`) agar VM Router dapat meneruskan paket antar interface, karena secara default kernel Linux akan mengabaikan paket yang bukan ditujukan untuk dirinya sendiri.
+- Static route pada host tujuan diperlukan agar host mengetahui jalur (gateway) menuju subnet lain yang bukan merupakan jaringan lokalnya.
+- Hasil pengujian ping antar subnet yang sebelumnya gagal pada Lab 1 (tanpa router) berhasil dilakukan setelah router, IP forwarding, dan static route dikonfigurasi dengan benar, membuktikan fungsi routing sebagai penghubung logis antar subnet.
