@@ -811,3 +811,236 @@ Praktikum Lab 6: Firewall & Port Filtering berhasil diselesaikan. Berdasarkan ha
 - Pengujian port membuktikan bahwa port yang tidak didaftarkan secara eksplisit (misal port 23) berhasil diblokir, sementara port yang diizinkan tetap dapat diakses.
 - Konfigurasi NAT (Masquerade) berhasil memungkinkan VM di jaringan lokal (LAN) mengakses internet melalui satu titik keluar (Gateway), tanpa VM tersebut memiliki akses internet langsung.
 - IP forwarding dan NAT saling melengkapi: IP forwarding memastikan paket diteruskan antar interface, sementara Masquerade memastikan paket tersebut "menyamar" menggunakan IP WAN yang valid di internet.
+
+# Lab 7: Network Troubleshooting
+
+## 1. Tujuan Praktikum
+
+- Melakukan simulasi berbagai skenario gangguan jaringan secara sengaja untuk melatih kemampuan diagnosa.
+- Menggunakan tools diagnostik standar (`ip route`, `traceroute`, `resolvectl`, `nc`) untuk mengidentifikasi akar masalah konektivitas.
+- Membedakan jenis masalah jaringan berdasarkan gejala: masalah routing, DNS, interface, dan port filtering.
+- Mendokumentasikan alur troubleshooting dari gejala hingga solusi (Problem → Diagnosa → Root Cause → Solusi).
+
+## 2. Langkah Kerja dan Hasil Praktikum
+
+### 2.1 Skenario 1: Kesalahan Default Gateway
+
+**Simulasi masalah:**
+
+```bash
+sudo ip route del default
+sudo ip route add default via 192.168.10.99
+```
+
+**Pengujian:**
+
+```bash
+ping 8.8.8.8
+```
+
+**Gejala**: Ping gagal/timeout ke seluruh tujuan di luar subnet lokal.
+
+**Diagnosa:**
+
+```bash
+ip route
+traceroute 8.8.8.8
+```
+
+**Root Cause**: Default gateway diarahkan ke IP (`192.168.10.99`) yang tidak valid/tidak ada pada jaringan, sehingga paket tidak dapat diteruskan keluar dari subnet lokal.
+
+**Solusi:**
+
+```bash
+sudo ip route del default
+sudo ip route add default via 192.168.10.1
+```
+
+### 2.2 Skenario 2: DNS Tidak Valid
+
+**Simulasi masalah:**
+
+```bash
+sudo resolvectl dns enp0s3 1.1.1.1.1.1
+```
+
+**Pengujian:**
+
+```bash
+ping google.com
+ping 8.8.8.8
+```
+
+**Gejala**: Ping menggunakan nama domain (`google.com`) gagal, namun ping menggunakan IP langsung (`8.8.8.8`) tetap berhasil.
+
+**Diagnosa:**
+
+```bash
+resolvectl status
+nslookup google.com
+```
+
+**Root Cause**: DNS server yang dikonfigurasi tidak valid, sehingga proses resolusi nama domain ke IP gagal dilakukan — meskipun jalur konektivitas jaringan itu sendiri masih normal (dibuktikan dengan keberhasilan ping ke IP).
+
+**Solusi:**
+
+```bash
+sudo resolvectl dns enp0s3 192.168.10.10
+```
+
+### 2.3 Skenario 3: Network Interface Down
+
+**Simulasi masalah:**
+
+```bash
+sudo ip link set enp0s3 down
+```
+
+**Pengujian:**
+
+```bash
+ping 192.168.10.1
+```
+
+**Gejala**: Ping gagal total, bahkan ke default gateway sekalipun (berbeda dengan Skenario 1 & 2 yang masih bisa menjangkau sebagian jaringan).
+
+**Diagnosa:**
+
+```bash
+ip link show enp0s3
+```
+
+**Root Cause**: Interface jaringan dalam status `DOWN`, sehingga tidak ada traffic yang dapat dikirim maupun diterima sama sekali melalui interface tersebut.
+
+**Solusi:**
+
+```bash
+sudo ip link set enp0s3 up
+```
+
+### 2.4 Skenario 4: Port Service Diblokir Firewall
+
+**Pengujian (menggunakan konfigurasi firewall dari Lab 6):**
+
+```bash
+nc -zv 192.168.10.1 23
+telnet 192.168.10.1 23
+```
+
+**Gejala**: Koneksi ke port 23 gagal/timeout, sementara ping ke IP yang sama (`192.168.10.1`) tetap berhasil.
+
+**Diagnosa**: Karena ping (ICMP) berhasil namun koneksi ke port tertentu gagal, masalah dipastikan bersifat **spesifik pada port/service** (firewall filtering), bukan masalah konektivitas jaringan secara keseluruhan.
+
+**Root Cause**: Port 23 tidak termasuk dalam daftar port yang diizinkan pada konfigurasi UFW (hanya port 22 dan 80 yang diizinkan sesuai Lab 6), sehingga request ditolak oleh firewall.
+
+**Solusi**: Bukan merupakan kesalahan konfigurasi — ini adalah perilaku yang diharapkan dari firewall. Solusi hanya diperlukan jika port tersebut memang perlu dibuka, dengan menambahkan rule `sudo ufw allow 23/tcp`.
+
+## 3. Kesimpulan
+
+Praktikum Lab 7: Network Troubleshooting berhasil diselesaikan. Berdasarkan hasil simulasi:
+
+- Setiap jenis gangguan jaringan (routing, DNS, interface, port filtering) memiliki gejala yang berbeda dan dapat dibedakan melalui pengujian bertahap, bukan hanya dengan satu jenis pengujian saja.
+- Perbandingan hasil ping ke IP versus ping ke domain menjadi indikator penting untuk membedakan masalah DNS dari masalah konektivitas jaringan secara umum.
+- Perbandingan hasil ping (ICMP) versus koneksi ke port tertentu menjadi indikator penting untuk membedakan masalah firewall/port filtering dari masalah jaringan secara keseluruhan.
+- Pendekatan troubleshooting yang sistematis — memeriksa layer demi layer (interface → routing → DNS → port/service) — mempercepat proses identifikasi akar masalah dibandingkan menebak solusi secara acak.
+
+# Lab 8: Packet Capture & Analysis
+
+## 1. Tujuan Praktikum
+
+- Melakukan capture traffic jaringan secara langsung menggunakan `tcpdump`.
+- Menganalisis proses TCP 3-way handshake (SYN, SYN-ACK, ACK) pada koneksi SSH.
+- Menyimpan hasil capture ke dalam file `.pcap` untuk analisis lebih lanjut.
+- Melakukan filtering traffic berdasarkan IP dan port tertentu dari file capture.
+- Memahami struktur dasar paket data yang melewati jaringan, tidak hanya bergantung pada hasil akhir tools seperti `ping`.
+
+## 2. Langkah Kerja dan Hasil Praktikum
+
+### 2.1 Instalasi tcpdump
+
+```bash
+sudo apt update
+sudo apt install tcpdump -y
+```
+
+**Hasil**: `tcpdump` berhasil terinstal dan siap digunakan untuk melakukan capture traffic.
+
+### 2.2 Capture Traffic ICMP (Ping)
+
+Menjalankan capture pada VM-Client:
+
+```bash
+sudo tcpdump -i enp0s3 icmp -v
+```
+
+Melakukan ping dari VM lain menuju VM-Client:
+
+```bash
+ping 192.168.10.70
+```
+
+**Hasil**: `tcpdump` menampilkan log secara real-time untuk setiap paket `ICMP echo request` dan `ICMP echo reply`, menunjukkan proses request-reply ping secara langsung pada level paket.
+
+### 2.3 Capture dan Analisis TCP 3-Way Handshake
+
+Menjalankan capture khusus pada port SSH:
+
+```bash
+sudo tcpdump -i enp0s3 port 22 -v
+```
+
+Melakukan koneksi SSH dari device lain:
+
+```bash
+ssh sysadmin@192.168.10.70
+```
+
+**Hasil**: Tiga paket pertama pada hasil capture menunjukkan proses TCP 3-way handshake:
+
+1. `Flags [S]` — paket SYN, inisiasi koneksi dari client.
+2. `Flags [S.]` — paket SYN-ACK, balasan dari server.
+3. `Flags [.]` — paket ACK, konfirmasi dari client.
+
+Proses ini merupakan mekanisme dasar yang terjadi pada setiap koneksi berbasis TCP, termasuk HTTP, SSH, dan koneksi database.
+
+### 2.4 Menyimpan Hasil Capture ke File
+
+```bash
+sudo tcpdump -i enp0s3 -w capture.pcap
+```
+
+**Hasil**: Traffic jaringan selama sesi capture berhasil disimpan ke dalam file `capture.pcap` untuk keperluan analisis lebih lanjut.
+
+### 2.5 Filtering Hasil Capture Berdasarkan IP dan Port
+
+Memfilter berdasarkan IP tertentu:
+
+```bash
+sudo tcpdump -r capture.pcap host 192.168.10.10
+```
+
+Memfilter berdasarkan port tertentu:
+
+```bash
+sudo tcpdump -r capture.pcap port 80
+```
+
+**Hasil**: File `.pcap` berhasil difilter, hanya menampilkan traffic yang relevan dengan IP atau port yang ditentukan, mempermudah analisis pada capture berukuran besar.
+
+### 2.6 Analisis Visual dengan Wireshark (Opsional)
+
+```bash
+sudo apt install wireshark -y
+wireshark capture.pcap
+```
+
+**Hasil**: File capture berhasil dibuka dan dianalisis secara visual melalui antarmuka Wireshark, memudahkan inspeksi detail tiap layer paket (Ethernet, IP, TCP, dan payload) dibandingkan pembacaan melalui terminal.
+
+## 3. Kesimpulan
+
+Praktikum Lab 8: Packet Capture & Analysis berhasil diselesaikan. Berdasarkan hasil pengujian:
+
+- `tcpdump` berhasil digunakan untuk melakukan capture traffic secara real-time, baik untuk protokol ICMP maupun TCP.
+- Proses TCP 3-way handshake (SYN, SYN-ACK, ACK) berhasil diamati secara langsung pada koneksi SSH, memberikan pemahaman konkret mengenai mekanisme pembentukan koneksi TCP.
+- Hasil capture dapat disimpan dalam format `.pcap` dan difilter berdasarkan kriteria tertentu (IP/port), sehingga analisis dapat difokuskan pada traffic yang relevan.
+- Kemampuan membaca traffic pada level paket memberikan pemahaman yang lebih mendalam dibandingkan hanya mengandalkan hasil akhir dari tools seperti `ping` atau `curl`, dan menjadi dasar penting untuk troubleshooting jaringan tingkat lanjut.
