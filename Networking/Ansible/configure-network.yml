@@ -1,0 +1,16 @@
+---
+- name: Configure static IP via Netplan
+  hosts: servers
+  become: yes
+  vars:
+    static_ip: "{{ ip_address }}"
+  tasks:
+    - name: Deploy netplan configuration
+      template:
+        src: netplan-config.j2
+        dest: /etc/netplan/50-cloud-init.yaml
+      notify: apply netplan
+
+  handlers:
+    - name: apply netplan
+      command: netplan apply
