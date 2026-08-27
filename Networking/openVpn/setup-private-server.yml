@@ -1,0 +1,18 @@
+---
+- name: Configure Private Server(s)
+  hosts: private_servers
+  become: yes
+  vars:
+    interface: enp0s3
+    gateway_ip: "10.10.10.1"
+
+  tasks:
+    - name: Deploy netplan configuration
+      template:
+        src: templates/private-server-netplan.j2
+        dest: /etc/netplan/50-cloud-init.yaml
+      notify: apply netplan
+
+  handlers:
+    - name: apply netplan
+      command: netplan apply
