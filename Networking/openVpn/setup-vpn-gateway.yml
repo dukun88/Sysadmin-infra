@@ -1,0 +1,54 @@
+---
+- name: Configure VPN Gateway
+  hosts: vpn_gateway
+  become: yes
+  vars:
+    public_interface: enp0s3
+    internal_interface: enp0s8
+    public_ip: "192.168.56.10/24"
+    internal_ip: "10.10.10.1/24"
+
+  tasks:
+    - name: Deploy netplan configuration
+      template:
+        src: templates/vpn-server-netplan.j2
+        dest: /etc/netplan/50-cloud-init.yaml
+      notify: apply netplan
+
+    - name: Enable IP forwarding (runtime)
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        sysctl_set: yes
+        state: present
+        reload: yes
+
+    - name: Enable IP forwarding permanently
+      lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^#?net.ipv4.ip_forward='
+        line: 'net.ipv4.ip_forward=1'
+
+    - name: Check if OpenVPN is already installed
+      stat:
+        path: /etc/openvpn/server.conf
+      register: openvpn_installed
+
+    - name: Download OpenVPN install script
+      get_url:
+        url: https://raw.githubusercontent.com/angristan/openvpn-install/master/openvpn-install.sh
+        dest: /tmp/openvpn-install.sh
+        mode: '0755'
+      when: not openvpn_installed.stat.exists
+
+    # Catatan: openvpn-install.sh bersifat interaktif (wizard),
+    # sehingga untuk otomasi penuh perlu dijalankan dengan
+    # environment variable non-interaktif (AUTO_INSTALL=y),
+    # yang didukung oleh script tersebut.
+    - name: Run OpenVPN install script (non-interactive)
+      shell: AUTO_INSTALL=y /tmp/openvpn-install.sh
+      when: not openvpn_installed.stat.exists
+
+  handlers:
+    - name: apply netplan
+      command: netplan apply
