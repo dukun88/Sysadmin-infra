@@ -1,0 +1,10 @@
+network:
+  version: 2
+  ethernets:
+    enp0s3:
+      dhcp4: no
+      addresses:
+        - {{ static_ip }}
+      nameservers:
+        addresses:
+          - 8.8.8.8
