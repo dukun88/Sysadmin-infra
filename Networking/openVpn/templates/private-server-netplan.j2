@@ -1,0 +1,10 @@
+network:
+  version: 2
+  ethernets:
+    {{ interface }}:
+      dhcp4: no
+      addresses:
+        - {{ ansible_host }}/24
+      routes:
+        - to: default
+          via: {{ gateway_ip }}
