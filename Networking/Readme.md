@@ -119,4 +119,4 @@ Praktikum Lab 1: IP Addressing & Subnetting berhasil diselesaikan. Berdasarkan h
 - Perhitungan subnetting manual dari `/24` menjadi 4 subnet `/26` berhasil dilakukan dengan benar, menghasilkan network address, broadcast address, dan usable host range yang sesuai teori.
 - Konfigurasi static IP pada kedua VM berhasil diterapkan sesuai hasil perhitungan subnetting.
 - Host yang berada pada subnet berbeda terbukti tidak dapat saling berkomunikasi secara langsung, sehingga menegaskan pentingnya fungsi routing/router sebagai penghubung antar subnet, yang akan dibahas lebih lanjut pada lab berikutnya (Routing Dasar).
-
+- Ditemukan bahwa nama file konfigurasi Netplan dapat berbeda-beda tergantung metode instalasi (misalnya 50-cloud-init.yaml yang di-generate otomatis oleh cloud-init, atau 00-installer-config.yaml dari installer versi lama). Oleh karena itu, praktik yang benar adalah memeriksa file yang aktif terlebih dahulu menggunakan `ls /etc/netplan/` sebelum melakukan konfigurasi, bukan mengasumsikan nama file secara langsung.
